@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: prodflow
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/prodflow}
+    username: ${DB_USER:prodflow}
+    password: ${DB_PASSWORD:prodflow}
+  jpa:
+    hibernate:
+      ddl-auto: validate          # Flyway owns the schema, Hibernate only checks it
+    # Kept on for the MVP so DTO mapping in controllers can read lazy relations.
+    # Technical debt: move mapping into the services and switch this off.
+    open-in-view: true
+  flyway:
+    enabled: true
+
+server:
+  port: ${PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html

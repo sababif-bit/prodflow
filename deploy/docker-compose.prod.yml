@@ -1,0 +1,11 @@
+# Production on the EC2 instance. One installation = one customer (single-tenant).
+# The pipeline copies this file to the server and runs:
+#   docker compose -f docker-compose.prod.yml --env-file .env pull && ... up -d
+# IMAGE_TAG decides the version -> rollback = start the previous tag again.
+services:
+  backend:
+    image: ghcr.io/${GITHUB_REPOSITORY}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "80:8080"

@@ -1,0 +1,35 @@
+# Local development: PostgreSQL + backend built from source.
+#   docker compose up --build
+# API: http://localhost:8080/swagger-ui.html
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: prodflow
+      POSTGRES_USER: prodflow
+      POSTGRES_PASSWORD: prodflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prodflow -d prodflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/prodflow
+      DB_USER: prodflow
+      DB_PASSWORD: prodflow
+      SPRING_PROFILES_ACTIVE: demo
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy   # without this the backend starts before Postgres is ready
+
+volumes:
+  pgdata:

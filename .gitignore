@@ -1,0 +1,14 @@
+# Build
+target/
+node_modules/
+dist/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Secrets - never commit
+.env
+*.pem
