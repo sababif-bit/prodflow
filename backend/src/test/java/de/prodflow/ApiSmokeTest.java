@@ -6,9 +6,12 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -32,7 +35,7 @@ class ApiSmokeTest {
 
     @Test
     void createItemReturns201() throws Exception {
-        mvc.perform(post("/api/items").contentType(MediaType.APPLICATION_JSON).content("""
+        mvc.perform(post("/api/items").with(planner()).contentType(MediaType.APPLICATION_JSON).content("""
                         {"code":"SC-1","name":"Screw","unit":"pcs","type":"MATERIAL","qtyOnHand":10}
                         """))
                 .andExpect(status().isCreated())
@@ -41,7 +44,7 @@ class ApiSmokeTest {
 
     @Test
     void invalidItemReturns400ProblemDetail() throws Exception {
-        mvc.perform(post("/api/items").contentType(MediaType.APPLICATION_JSON).content("""
+        mvc.perform(post("/api/items").with(planner()).contentType(MediaType.APPLICATION_JSON).content("""
                         {"code":"","name":"Screw","unit":"pcs","type":"MATERIAL","qtyOnHand":-1}
                         """))
                 .andExpect(status().isBadRequest())
@@ -50,7 +53,12 @@ class ApiSmokeTest {
 
     @Test
     void unknownOrderReturns404() throws Exception {
-        mvc.perform(get("/api/production-orders/999999"))
+        mvc.perform(get("/api/production-orders/999999").with(planner()))
                 .andExpect(status().isNotFound());
+    }
+
+    /** Mocked, already-validated token with the PLANNER role (signature/issuer checks are tested separately). */
+    private static JwtRequestPostProcessor planner() {
+        return jwt().authorities(new SimpleGrantedAuthority("ROLE_PLANNER"));
     }
 }

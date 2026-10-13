@@ -17,6 +17,18 @@ spring:
 server:
   port: ${PORT:8080}
 
+# OIDC token validation (Keycloak). Defaults point to the local Keycloak added in step 2.
+# Production overrides all three via environment variables. If they are wrong,
+# every API call is rejected with 401 (fail closed) - nothing is opened up.
+prodflow:
+  security:
+    # Must equal the "iss" claim, i.e. the PUBLIC Keycloak URL the browser uses
+    issuer-uri: ${OIDC_ISSUER_URI:http://localhost:8180/realms/prodflow}
+    # Where the backend fetches the signing keys; may be an INTERNAL address (e.g. http://keycloak:8080/...)
+    jwk-set-uri: ${OIDC_JWK_SET_URI:http://localhost:8180/realms/prodflow/protocol/openid-connect/certs}
+    # Tokens must be issued for this API ("aud" claim)
+    audience: ${OIDC_AUDIENCE:prodflow-api}
+
 management:
   endpoints:
     web:
