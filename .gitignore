@@ -12,3 +12,10 @@ dist/
 # Secrets - never commit
 .env
 *.pem
+
+# Environment-specific secrets
+.env.*
+!.env.example
+
+# Local backup files
+*.bak
