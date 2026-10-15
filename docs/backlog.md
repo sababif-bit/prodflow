@@ -1,7 +1,7 @@
 # Backlog – GitHub Issues
 
 Jede Überschrift = ein GitHub Issue (Titel kopieren, Inhalt als Beschreibung).
-Ein Issue → ein Branch `feature/<nr>-<name>` → ein Pull Request.
+Ein Issue → ein Branch `feature/<GitHub-Issue-Nr>-<name>` → ein Pull Request.
 
 Labels: `backend` `frontend` `devops` `docs` `stretch`
 

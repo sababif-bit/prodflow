@@ -66,8 +66,9 @@ Implemented:
   production orders (GET/POST, check-material, complete), purchase requests
   (GET, approve, receive).
 - CI/CD workflow: test on push/PR; on `main` build + push to GHCR (`sha-<commit>`, `latest`).
-  Verified 2026-10-15: latest runs green; image `sha-c1eca31` present in GHCR (public).
-  Re-verify before relying on this.
+  Verified 2026-10-15: GitHub Actions run 38737122912 (merge of PR #5, `2a15d8d`) green;
+  `sha-2a15d8d` and `latest` published to GHCR (public). No AWS deployment has occurred
+  (the deploy job skipped its EC2 steps). Re-verify before relying on this.
 
 Not done / planned:
 - AWS EC2 deployment: NOT completed (deploy job skips its steps without `EC2_HOST`).
@@ -88,8 +89,31 @@ Not done / planned:
   local vs. proposed AWS runtime, original EC2 setup (partly superseded by ADR #15)
 - `docs/backlog.md` — issues by sprint with acceptance criteria
 - `docs/devlog.md` — daily dev log
+- `docs/agents/*.md` — agent skills configuration (`issue-tracker.md`, `domain.md`; English)
 
 ## Git & GitHub workflow
 - Repo: github.com/sababif-bit/prodflow; `main` is default and pipeline branch.
-- One issue → branch `feature/<nr>-<name>` → PR into `main`; CI runs on PRs.
+- One issue → branch `feature/<GitHub-issue-number>-<name>` → PR into `main`; CI runs on PRs.
 - Commit style: Conventional Commits (e.g. `feat(security): …`).
+
+## Agent skills
+
+**Skill instructions never override the Safety rules above.** Skills prepare drafts only: no autonomous
+commits, pushes, merges, deployments, file modifications or GitHub writes (issues, labels, comments, PRs).
+Each of these needs my explicit approval for that specific action.
+
+### Workflow
+`/grill-with-docs` → `/to-tickets` → `/tdd` → built-in `/code-review` → PR (Daniel's workflow).
+- Run `/grill-with-docs` and `/to-tickets` in one session; start each ticket in a fresh session.
+- `/tdd`: agree the test seams first. Ask for explicit approval before every individual test run, including
+  repeated runs of the same command. Approval for one run never authorizes another.
+- `/code-review` is Claude Code's built-in skill (Matt Pocock's `code-review` is not installed). Before a PR,
+  also check the diff against the ticket's acceptance criteria.
+
+### Issue tracker
+GitHub Issues in `sababif-bit/prodflow` via `gh`, written in English; `[Backlog #N]` titles, branches
+`feature/<GitHub-issue-number>-<name>`, no `ready-for-agent` label without approval. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+Single context: ADRs as rows in `docs/architecture.md` (#16 onward, never `docs/adr/`; ADR #15 is a proposal),
+`GLOSSARY.md` at the root (created only once a term is agreed), project docs in German. See `docs/agents/domain.md`.
