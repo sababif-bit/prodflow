@@ -49,7 +49,9 @@ Negativ: `https://auth-<name>.duckdns.org/admin/` und `/realms/master` müssen 4
 
 ## 4. Betrieb
 - **Keycloak-Admin:** `ssh -L 8180:127.0.0.1:8180 ubuntu@<ip>`, dann `http://localhost:8180` (Benutzer/Passwort aus `deploy/.env`: `KC_BOOTSTRAP_ADMIN_*`).
-- **Neue Version / Rollback:** `sudo /opt/prodflow/repo/deploy/deploy.sh sha-<commit>` (Rollback = früheren Tag angeben).
+- **Neue Version:** kommt von selbst: CI setzt den GHCR-Zeiger `prod`, der Agent (`prodflow-agent.timer`, jede Minute) rollt aus, prüft die Gesundheit und kehrt bei Fehlern automatisch zurück (`journalctl -u prodflow-agent`). Handweg: `sudo /opt/prodflow/repo/deploy/deploy.sh sha-<commit>`.
+- **Rollback von Hand:** zuerst `sudo touch /var/lib/prodflow/hold` (Agent pausieren), dann `deploy.sh sha-<früherer Commit>`; fortsetzen mit `sudo rm /var/lib/prodflow/hold`.
+- **Pipeline-Prüfung (Verify):** GitHub → Settings → Secrets and variables → Actions → *Variables* → `PROD_APP_URL` = `https://app-<name>.duckdns.org` (kein Geheimnis). Ohne diese Variable meldet der Verify-Job nur "nicht ausgeführt".
 - **IP-Wechsel:** `sudo bash /opt/prodflow/repo/scripts/duckdns-update.sh /opt/prodflow/repo/deploy/.env`.
 - **Speicher messen (Entscheidung t3.small/t3.medium):** nach einem vollständigen Demolauf `docker stats --no-stream` und `free -m`;
   bleibt `available` unter ca. 300 MB oder wird Swap genutzt, auf `t3.medium` wechseln.
