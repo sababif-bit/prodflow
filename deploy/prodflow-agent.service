@@ -1,0 +1,11 @@
+[Unit]
+Description=ProdFlow pull-based deployment agent (one run)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/prodflow/repo/deploy
+ExecStart=/opt/prodflow/repo/deploy/agent.sh
+# the agent talks to Docker as root; it only pulls from the project's own GHCR package and starts the reviewed Compose file
+TimeoutStartSec=900
