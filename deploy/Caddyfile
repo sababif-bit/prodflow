@@ -1,0 +1,51 @@
+# Reverse proxy for the production stack (Issue #16). Two public hostnames, automatic HTTPS (Let's Encrypt).
+# Placeholders come from the Compose environment: APP_HOST, AUTH_HOST (hostnames only), TLS_DIRECTIVE (empty in production,
+# "tls internal" in the local test, see deploy/docker-compose.local-test.yml).
+{
+	admin off
+	servers {
+		protocols h1 h2
+	}
+}
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=86400"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
+
+# ---- application: Swagger UI + API (Spring Security decides who may do what) ----
+{$APP_HOST} {
+	{$TLS_DIRECTIVE}
+	import security_headers
+	encode zstd gzip
+
+	# only the health endpoint of the actuator is public; /actuator/info stays ADMIN-only inside the backend and is not routed
+	handle /actuator/health* {
+		reverse_proxy backend:8080
+	}
+	handle /actuator* {
+		respond "Not found" 404
+	}
+	handle {
+		reverse_proxy backend:8080
+	}
+}
+
+# ---- Keycloak: allowlist of public paths. The admin console, the admin REST API, the master realm and metrics are NOT routed;
+# ---- administration happens through an SSH tunnel to 127.0.0.1:8180 on the server (see docs/architecture.md).
+{$AUTH_HOST} {
+	{$TLS_DIRECTIVE}
+	import security_headers
+
+	@public path /realms/prodflow /realms/prodflow/* /resources/* /robots.txt
+	handle @public {
+		reverse_proxy keycloak:8080
+	}
+	handle {
+		respond "Not found" 404
+	}
+}
