@@ -30,6 +30,27 @@ services:
       timeout: 3s
       retries: 10
 
+  # Fail-fast guard (Issue #8): on a fresh Keycloak database it validates the demo passwords BEFORE Keycloak imports the
+  # realm; if realm "prodflow" already exists it does nothing, so routine restarts need no demo passwords.
+  # See keycloak/import-guard.sh.
+  keycloak-import-guard:
+    image: postgres:16-alpine
+    entrypoint: ["sh", "/guard/import-guard.sh"]
+    environment:
+      PGHOST: keycloak-db
+      PGDATABASE: ${KEYCLOAK_DB_NAME}
+      PGUSER: ${KEYCLOAK_DB_USER}
+      PGPASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      DEMO_PLANNER_PASSWORD: ${DEMO_PLANNER_PASSWORD:-}
+      DEMO_PURCHASER_PASSWORD: ${DEMO_PURCHASER_PASSWORD:-}
+      DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-}
+    volumes:
+      - ./keycloak/import-guard.sh:/guard/import-guard.sh:ro
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    restart: "no"
+
   keycloak:
     image: quay.io/keycloak/keycloak:26.4.0
     command: start-dev --import-realm
@@ -42,6 +63,12 @@ services:
       KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
       KC_HOSTNAME: http://localhost:8180
       KC_HTTP_ENABLED: "true"
+      # Placeholders of keycloak/prodflow-realm.json. The demo passwords are validated by keycloak-import-guard before the
+      # first import; an empty value is never relied on (the guard refuses it). The URL is not secret and has a local default.
+      PRODFLOW_APP_URL: ${PRODFLOW_APP_URL:-http://localhost:8080}
+      DEMO_PLANNER_PASSWORD: ${DEMO_PLANNER_PASSWORD:-}
+      DEMO_PURCHASER_PASSWORD: ${DEMO_PURCHASER_PASSWORD:-}
+      DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-}
     ports:
       - "127.0.0.1:8180:8080"
     volumes:
@@ -49,6 +76,8 @@ services:
     depends_on:
       keycloak-db:
         condition: service_healthy
+      keycloak-import-guard:
+        condition: service_completed_successfully
 
   backend:
     build: ./backend

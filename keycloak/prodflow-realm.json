@@ -1,6 +1,7 @@
 {
   "realm": "prodflow",
   "enabled": true,
+  "accessTokenLifespan": 300,
   "bruteForceProtected": true,
   "permanentLockout": false,
   "failureFactor": 5,
@@ -57,6 +58,72 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "prodflow-swagger",
+      "name": "ProdFlow Swagger UI (demo client)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "${PRODFLOW_APP_URL}/swagger-ui/oauth2-redirect.html"
+      ],
+      "webOrigins": [
+        "${PRODFLOW_APP_URL}"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "access.token.lifespan": "1800"
+      },
+      "protocolMappers": [
+        {
+          "name": "prodflow-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "prodflow-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "planner",
+      "enabled": true,
+      "firstName": "Demo",
+      "lastName": "Planner",
+      "email": "planner@prodflow.example",
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "${DEMO_PLANNER_PASSWORD}", "temporary": false }],
+      "realmRoles": ["PLANNER"]
+    },
+    {
+      "username": "purchaser",
+      "enabled": true,
+      "firstName": "Demo",
+      "lastName": "Purchaser",
+      "email": "purchaser@prodflow.example",
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "${DEMO_PURCHASER_PASSWORD}", "temporary": false }],
+      "realmRoles": ["PURCHASER"]
+    },
+    {
+      "username": "admin",
+      "enabled": true,
+      "firstName": "Demo",
+      "lastName": "Admin",
+      "email": "admin@prodflow.example",
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "${DEMO_ADMIN_PASSWORD}", "temporary": false }],
+      "realmRoles": ["ADMIN"]
     }
   ]
 }

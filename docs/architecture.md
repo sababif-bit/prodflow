@@ -81,6 +81,103 @@ Bestandskorrekturen sind ADMIN vorbehalten.
 
 Offen: Swagger UI und API-Doku in Produktion abschalten.
 
+### Demo-Benutzer, Swagger-Client und Token-Laufzeiten (Issue #8)
+
+Umgesetzt im Realm-Import `keycloak/prodflow-realm.json`; geprüft gegen ein Wegwerf-Keycloak 26.4.0
+(`scripts/test-realm-import.ps1`, siehe unten).
+
+- **Demo-Benutzer:** `planner` (PLANNER), `purchaser` (PURCHASER) und `admin` (ADMIN), jeweils nur mit ihrer
+  Anwendungsrolle. Die Passwörter stehen im Import nur als Platzhalter (`${DEMO_PLANNER_PASSWORD}`,
+  `${DEMO_PURCHASER_PASSWORD}`, `${DEMO_ADMIN_PASSWORD}`). Die echten Werte kommen aus der Umgebung des
+  Keycloak-Containers (lokal `.env`, auf dem Server die geschützte `.env`) und gehören nie in Git, Logs oder Chat.
+  Keycloak 26.4 ersetzt die Platzhalter beim Import (Passwörter und URLs): echte Logins gelingen, die URL-Felder sind aufgelöst.
+- **Fehlende Variablen (geprüft, Keycloak 26.4) – wichtig für das Deployment:** Fehlt `PRODFLOW_APP_URL`, bricht Keycloak den Start
+  ab („A redirect URI is not a valid URI"); das ist sicher. Fehlt dagegen eine `DEMO_*_PASSWORD`-Variable, importiert Keycloak den
+  Realm **ohne Fehler** und speichert den Platzhaltertext (z. B. `${DEMO_PLANNER_PASSWORD}`) als Passwort; ein Login damit gelingt.
+  Eine **leere** Variable ist ebenfalls nicht sicher abgesichert: Keycloak startet, legt den Benutzer aber mit einem defekten
+  Passwort-Credential an (keine Hash-Daten); kein Login ist möglich (Serverfehler), das ist unbrauchbar, aber kein Fail-Closed.
+  Deshalb verlässt sich das Projekt nicht auf Keycloaks Verhalten, sondern prüft die Werte **vor** dem Import (nächster Punkt).
+  Zusätzlich prüft `smoke-auth.ps1` pro Benutzer, dass der Platzhaltertext als Passwort **abgelehnt** wird; `test-realm-import.ps1`
+  enthält Negativkontrollen für beide Fehlkonfigurationen (nicht gesetzt, leer).
+- **Import-Guard (`keycloak/import-guard.sh`):** Ein einmaliger Container (`postgres:16-alpine`, Compose-Dienst
+  `keycloak-import-guard`) läuft vor Keycloak und fragt die Keycloak-Datenbank, ob der Realm `prodflow` schon existiert.
+  - Realm vorhanden: Keycloak überspringt den Import, der Guard prüft nichts. Routinemäßige Neustarts brauchen die Demo-Passwörter
+    nicht, ein bestehender Realm wird nie angefasst.
+  - Realm fehlt (leere Datenbank): alle drei `DEMO_*_PASSWORD` müssen gesetzt, nicht leer, ohne `${…}`-Platzhalter, ohne
+    Steuerzeichen oder Leerzeichen am Rand, kein Platzhalter-/Offensichtlich-Passwort (`CHANGE_ME`, „password" …), mindestens
+    12 Zeichen mit mindestens 6 verschiedenen Zeichen, ohne den Benutzernamen und **paarweise verschieden** sein. Sonst Exit 1,
+    Keycloak startet nicht (`depends_on … service_completed_successfully`) und es wird nichts importiert.
+  - Unsicherer Zustand (Datenbank nicht erreichbar, Abfrage schlägt fehl): Exit 2, ebenfalls kein Start (Fail-Closed).
+  - Ausgaben nennen nur Variablennamen und Gründe, nie Werte. `PRODFLOW_APP_URL` ist kein Geheimnis und hat in Compose den
+    Standard `http://localhost:8080`. Auf AWS (Issue #16) gilt für alle vier Variablen zusätzlich `${VAR:?}`.
+  - **Grenzen (bewusst dokumentiert):** `docker compose up --no-deps keycloak`, `docker compose restart keycloak` und
+    Docker-Neustartrichtlinien starten Keycloak ohne den Guard; auf leerer Datenbank entstünden dann unbrauchbare (nicht
+    funktionierende) Credentials, nie ein Platzhalter-Passwort, weil Compose leere statt fehlender Variablen übergibt. Für die
+    Produktion (Issue #16) deshalb `${VAR:?}` statt Standardwerten und den Guard als Entrypoint-Vorstufe prüfen. Die Demo-Passwörter
+    sind bis zum Entfernen aus `.env` per `docker inspect` sichtbar (wie `KC_BOOTSTRAP_ADMIN_PASSWORD`); sie werden nur beim ersten
+    Import gebraucht und können danach aus `.env` gelöscht werden. Der Guard wiederholt die erste Datenbankabfrage bis zu 30 s,
+    weil PostgreSQL beim ersten Start kurz nur über den Unix-Socket erreichbar ist; ein Healthcheck mit `-h 127.0.0.1` wäre die
+    zusätzliche Compose-seitige Härtung. Längen- und Zeichenprüfung zählen Bytes (ASCII-Passwörter empfohlen). Bei jedem
+    Keycloak-Upgrade das Importverhalten mit `test-realm-import.ps1` neu prüfen.
+- **Clients:**
+  - `prodflow-swagger`: öffentlicher Client für Swagger UI (Authorization Code + PKCE S256; Password Grant, Implicit Flow und
+    Service Accounts aus). Redirect-URI `${PRODFLOW_APP_URL}/swagger-ui/oauth2-redirect.html`, Web-Origin `${PRODFLOW_APP_URL}`.
+  - `prodflow-web`: unverändert, für das spätere Angular-Frontend reserviert (nur `http://localhost:4200`).
+  - Beide Clients liefern im Access Token die Audience `prodflow-api`. `PRODFLOW_APP_URL` ist die öffentliche Basis-URL der
+    Anwendung (lokal `http://localhost:8080`, auf AWS die HTTPS-Adresse).
+- **Token-Laufzeit:** Realm-Standard 300 s; nur `prodflow-swagger` erhält über das Client-Attribut `access.token.lifespan`
+  1800 s (Demo). Gemessen: `exp − iat` = 1800 s bzw. 300 s. Obergrenze bleibt die SSO-Sitzung des Realms.
+- **Benutzerwechsel in Swagger UI:** Swagger sendet `prompt=login`. Verifiziert (Keycloak 26.4): Bei aktiver Keycloak-Sitzung
+  fragt `prompt=login` nur erneut das Passwort des bisherigen Benutzers ab; der Benutzername ist gesperrt. Ein Wechsel auf
+  eine andere Rolle ist so **nicht** möglich. Zwei geprüfte Wege:
+  1. **Zweites Browserfenster (privat):** `planner` im normalen, `purchaser` im privaten Fenster; beide Sitzungen laufen unabhängig
+     (empfohlen für die Präsentation).
+  2. **Bei Keycloak abmelden:** `<Keycloak-URL>/realms/prodflow/protocol/openid-connect/logout?client_id=prodflow-swagger`
+     aufrufen, die Abmeldung bestätigen und in Swagger erneut „Authorize" wählen.
+  „Logout" in Swagger UI verwirft nur das Token, nicht die Keycloak-Sitzung.
+- **Passwort ändern ohne Neuaufbau:** Der Import legt Benutzer nur beim Anlegen des Realms an. Spätere Änderungen am laufenden
+  Server mit `kcadm.sh`; Passwörter nie als Argument übergeben, sondern über die Umgebungsvariable `KC_CLI_PASSWORD`
+  (Eingabe nicht in Skripte oder Git schreiben, PowerShell-Verlauf nicht speichern):
+  ```powershell
+  $env:KC_CLI_PASSWORD = '<Admin-Passwort>'
+  docker compose exec -e KC_CLI_PASSWORD keycloak /opt/keycloak/bin/kcadm.sh config credentials --server http://localhost:8080 --realm master --user <Admin-Benutzer>
+  $env:KC_CLI_PASSWORD = '<neues Passwort>'
+  docker compose exec -e KC_CLI_PASSWORD keycloak /opt/keycloak/bin/kcadm.sh set-password -r prodflow --username planner
+  Remove-Item env:KC_CLI_PASSWORD
+  ```
+  Dieser Ablauf (mit `docker exec`) ist im Wegwerf-Keycloak getestet: danach gelingt der Login mit dem neuen Passwort.
+- **Automatische Prüfung:**
+  - `scripts/test-realm-import.ps1` startet ein Wegwerf-Keycloak (Port 8181, ohne Volume, nur lokal), importiert den Realm mit
+    zufällig erzeugten Testpasswörtern, prüft die importierte Konfiguration über die Admin-API und räumt in jedem Fall auf.
+  - `scripts/test-import-guard.ps1` prüft den Guard isoliert (Wegwerf-PostgreSQL, kein Keycloak): nicht gesetzt, leer, Platzhalter,
+    zu kurz, zu wenige verschiedene Zeichen, doppelte Passwörter, Steuerzeichen, vorhandener/fehlender Realm, unsicherer Zustand;
+    außerdem, dass kein Passwortwert ausgegeben wird.
+  - `scripts/test-compose-guard.ps1` prüft die Compose-Verdrahtung Ende-zu-Ende in einem eigenen, wegwerfbaren Compose-Projekt
+    (Port 8182, eigene Volumes, nie das echte Projekt): ohne/mit schlechten Passwörtern startet Keycloak nicht und importiert
+    nichts; mit gültigen Passwörtern gelingt der Import samt echter PKCE-Logins; Neustart und `--force-recreate` ohne Passwörter
+    funktionieren, die Passwörter bleiben unverändert.
+  - `scripts/smoke-auth.ps1` führt echte Logins aus (Authorization Code + PKCE S256, kein Password Grant) und prüft pro Benutzer
+    Rolle, Issuer, Audience, Token-Laufzeit, die CORS-Freigabe des Token-Endpunkts für die App-Origin (Swagger UI holt das Token im
+    Browser), die beiden Wege des Benutzerwechsels, die PKCE-Pflicht und die Ablehnung des Platzhaltertexts. Es ist gegen jede
+    Umgebung nutzbar (`-KeycloakUrl`, `-RedirectUri`, Passwörter als Umgebungsvariablen), z. B. später gegen AWS (Issue #19).
+  - Tokens, Codes, Cookies und Passwörter werden nie ausgegeben.
+- **Abnahme lokal (Stand Issue #8):** Authorization Code + PKCE für alle drei Benutzer ist automatisiert gegen ein Wegwerf-Keycloak
+  26.4.0 geprüft (Claims, Rollen, Audience, Laufzeiten 1800 s/300 s, CORS, PKCE-Pflicht, Benutzerwechsel über Abmeldung und zweites
+  Fenster). Die Rollenregeln (RBAC) sind mit gemockten JWTs getestet (`AuthorizationMatrixTest`, `PurchaseApprovalAuthorizationTest`,
+  vollständige Backend-Suite grün). Der lokale Keycloak wurde mit `scripts/provision-demo-realm.ps1` (idempotent, nur
+  hinzufügend; getestet mit `scripts/test-realm-catchup.ps1`) nachgezogen und die Swagger-Anmeldung im Browser manuell abgenommen.
+  Einschränkung: Swagger-`prompt=login` wechselt den Benutzer **nicht** (siehe oben); der Wechsel gelingt nur über Abmeldung bei
+  Keycloak oder ein zweites Fenster.
+- **Noch offen:**
+  - Der laufende lokale Stack nutzt den Guard erst nach dem nächsten `docker compose up -d` (dabei wird nur `keycloak` neu
+    erstellt, weil sich seine Umgebung ändert; der Guard findet den vorhandenen Realm und lässt ihn unberührt). Die Verdrahtung in
+    `docker-compose.yml` ist umgesetzt und isoliert getestet (`scripts/test-compose-guard.ps1`, 24/24).
+  - Produktion (Issue #16): `${VAR:?}` statt `:-`-Standardwerten, Deployment nur über `compose up -d`, Verify-Stufe mit echten
+    Logins für alle drei Benutzer, Healthcheck `pg_isready -h 127.0.0.1` für `keycloak-db`.
+  - Echte Token-Aufrufe gegen die Backend-API (401/403/2xx) sind Teil der End-to-End-Abnahme (Issue #19).
+  - Hinweis: `provision-demo-realm.ps1` stuft einen Benutzer mit defektem Passwort-Credential (leere Variable bei einem früheren
+    Import) als „vorhanden" ein; Folgeaufgabe, kein Teil von Issue #8.
+
 ## Laufzeitarchitektur
 
 ### Aktuell umgesetzt: lokal mit Docker Compose (`docker-compose.yml`)
