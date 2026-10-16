@@ -40,6 +40,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // --- public ---
                         .requestMatchers(GET, "/actuator/health", "/actuator/health/**").permitAll()
+                        // build revision for the deployment check (Issue #10); exposes nothing else
+                        .requestMatchers(GET, "/version").permitAll()
                         // API docs: switched off in production via springdoc properties (separate step)
                         .requestMatchers(GET, "/v3/api-docs", "/v3/api-docs/**",
                                 "/swagger-ui.html", "/swagger-ui/**").permitAll()
