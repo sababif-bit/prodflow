@@ -4,10 +4,21 @@
 # Every required value uses ${VAR:?}: a missing variable stops Compose instead of starting a weaker configuration.
 # Rollback = start the previous IMAGE_TAG again. Only Caddy publishes ports 80/443; Keycloak's admin interface is reachable
 # only on 127.0.0.1:8180 of the server (SSH tunnel), never through Caddy.
+# shared hardening: rotated logs (small volume), no privilege escalation inside containers
+x-common: &common
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+  security_opt:
+    - no-new-privileges:true
+
 name: prodflow-prod   # distinct from the local development project "prodflow"
 
 services:
   caddy:
+    <<: *common
     image: caddy:2.8-alpine
     restart: unless-stopped
     environment:
@@ -29,6 +40,7 @@ services:
         condition: service_started
 
   backend:
+    <<: *common
     image: ${BACKEND_IMAGE:-ghcr.io/sababif-bit/prodflow}:${IMAGE_TAG:?image tag (sha-...) to run}
     restart: unless-stopped
     environment:
@@ -46,6 +58,7 @@ services:
         condition: service_healthy
 
   keycloak:
+    <<: *common
     image: quay.io/keycloak/keycloak:26.4.0
     restart: unless-stopped
     command: ["start", "--import-realm"]
@@ -88,6 +101,7 @@ services:
 
   # Fail-fast guard: validates the demo passwords before the FIRST realm import; does nothing when the realm already exists.
   keycloak-import-guard:
+    <<: *common
     image: postgres:16-alpine
     entrypoint: ["sh", "/guard/import-guard.sh"]
     environment:
@@ -106,6 +120,7 @@ services:
     restart: "no"
 
   db:
+    <<: *common
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -122,6 +137,7 @@ services:
       retries: 10
 
   keycloak-db:
+    <<: *common
     image: postgres:16-alpine
     restart: unless-stopped
     environment:

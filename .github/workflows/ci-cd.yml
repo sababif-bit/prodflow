@@ -6,9 +6,9 @@ on:
   # every pull request, also those stacked on another feature branch (their base is not main)
   pull_request:
 
+# least privilege: only the build job may write packages (a compromised test dependency must not be able to move the "prod" tag)
 permissions:
   contents: read
-  packages: write
 
 jobs:
   # 1) TEST - runs on every push and pull request
@@ -21,6 +21,8 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -41,6 +43,9 @@ jobs:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
     # only the newest main commit is built and rolled out; an older run is cancelled instead of racing the newer one
     concurrency:
       group: release
@@ -49,6 +54,8 @@ jobs:
       image_tag: ${{ steps.meta.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - id: meta
         run: |
           echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"

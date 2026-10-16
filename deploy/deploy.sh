@@ -36,17 +36,17 @@ main() {
     return 1
   }
 
+  # Inside an `if` condition set -e does not abort: a failing pull/up (e.g. Compose gives up because the backend never becomes
+  # healthy) must lead to the rollback below, not end the script with the bad release still configured.
+  release() { dc pull --quiet backend && dc up -d --remove-orphans; }
+
   PREV=$(current_tag)
   echo "deploy: ${PREV:-<none>} -> $TAG"
-  checkout_for "$TAG"
-  set_tag "$TAG"
-  dc pull --quiet backend
-  dc up -d --remove-orphans
-  if wait_healthy; then
+  if checkout_for "$TAG" && set_tag "$TAG" && release && wait_healthy; then
     echo "deploy: $TAG is healthy"
     exit 0
   fi
-  echo "deploy: $TAG did NOT become healthy within ${TIMEOUT}s - rolling back to ${PREV:-<none>}" >&2
+  echo "deploy: $TAG could not be started or did NOT become healthy within ${TIMEOUT}s - rolling back to ${PREV:-<none>}" >&2
   if [ -n "$PREV" ] && [ "$PREV" != "$TAG" ]; then
     checkout_for "$PREV" || true
     set_tag "$PREV"

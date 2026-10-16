@@ -36,6 +36,13 @@ Zertifikate holt Caddy beim ersten Aufruf selbst (Let's Encrypt; DNS muss bereit
 
 Demo-Passwörter ansehen (nur wenn nötig, nie in Chat/Logs kopieren): `sudo grep '^DEMO_' /opt/prodflow/repo/deploy/.env`
 
+### Zertifikate: Proben nicht gegen Let's Encrypt
+Let's Encrypt begrenzt identische Zertifikate (ca. 5 pro Namen und Woche). Das Volume `caddy_data` **nie** löschen, wenn es nicht nötig ist.
+Für Proben/Neuaufbauten in `deploy/.env` setzen:
+`TLS_DIRECTIVE=tls { ca https://acme-staging-v02.api.letsencrypt.org/directory }` (Zertifikate sind dann nicht vertrauenswürdig, der Ablauf ist
+aber derselbe); für den echten Betrieb die Zeile entfernen. Voraussetzungen: Port 80 offen (HTTP-Challenge), DuckDNS-Namen zeigen auf die Elastic IP,
+bevor Caddy startet (das Bootstrap-Skript aktualisiert DuckDNS vor dem Start).
+
 ## 3. Prüfen
 Vom Laptop (Passwörter als Umgebungsvariablen, nie als Argument):
 ```bash

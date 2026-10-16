@@ -20,14 +20,19 @@ setup() { # fresh fake server tree
   rm -rf "$T/srv" "$T/bin" "$T/state"; mkdir -p "$T/srv/repo/deploy" "$T/bin" "$T/state"
   cp "$DEPLOY/agent.sh" "$DEPLOY/deploy.sh" "$T/srv/repo/deploy/"
   printf 'BACKEND_IMAGE=ghcr.io/example/prodflow\nIMAGE_TAG=sha-aaaaaaa\nSECRET_PLACEHOLDER=keep-me\n' >"$T/srv/repo/deploy/.env"
-  : >"$T/calls.log"; echo 0 >"$T/pull_status"; echo "$SHA_NEW" >"$T/rev"; echo healthy >"$T/health"; rm -f "$T/git_corrupt"
+  : >"$T/calls.log"; echo 0 >"$T/pull_status"; echo "$SHA_NEW" >"$T/rev"; echo healthy >"$T/health"; rm -f "$T/git_corrupt" "$T/up_fail_once" "$T/compose_pull_fail"
   cat >"$T/bin/docker" <<'EOF'
 #!/usr/bin/env bash
 T=$(dirname "$(dirname "$0")")
 case "$1" in
   pull) echo "docker pull $*" >>"$T/calls.log"; exit "$(cat "$T/pull_status")" ;;
   inspect) case "$*" in *Labels*) cat "$T/rev" ;; *Health*) cat "$T/health" ;; esac ;;
-  compose) shift; echo "docker compose $*" >>"$T/calls.log"; case "$*" in *"ps -q backend"*) echo fakecontainer ;; esac ;;
+  compose) shift; echo "docker compose $*" >>"$T/calls.log"
+    case "$*" in
+      *"ps -q backend"*) echo fakecontainer ;;
+      *"up -d"*) if [ -e "$T/up_fail_once" ]; then rm -f "$T/up_fail_once"; exit 1; fi ;;   # Compose exits 1 when a dependency never gets healthy
+      *"pull"*) [ -e "$T/compose_pull_fail" ] && exit 1 ;;
+    esac ;;
 esac
 exit 0
 EOF
@@ -73,6 +78,13 @@ n=$(ups); rc=$(run_agent)
 check $([ "$rc" = 0 ] && [ "$(ups)" = "$n" ] && grep -q 'failed earlier' "$T/out.log" && echo 0 || echo 1) 'the same failed release is not retried' "exit $rc"
 echo "$SHA_NEWER" >"$T/rev"; echo healthy >"$T/health"; rc=$(run_agent)
 check $([ "$rc" = 0 ] && [ "$(env_tag)" = sha-ccccccc ] && [ ! -e "$T/state/failed" ] && echo 0 || echo 1) 'a newer image is deployed and clears the failure' "exit $rc, tag $(env_tag)"
+
+echo "== compose up fails (backend never healthy): rollback must still happen"
+setup; touch "$T/up_fail_once"; rc=$(run_agent)
+check $([ "$rc" = 1 ] && [ "$(env_tag)" = sha-aaaaaaa ] && [ "$(cat "$T/state/failed" 2>/dev/null)" = sha-bbbbbbb ] && echo 0 || echo 1) 'failing compose up -> previous tag restored and failure recorded' "exit $rc, tag $(env_tag)"
+check $([ "$(ups)" = 2 ] && grep -q 'checkout --quiet --detach aaaaaaa' "$T/calls.log" && echo 0 || echo 1) 'previous version started again and repository moved back' "ups $(ups)"
+setup; touch "$T/compose_pull_fail"; rc=$(run_agent)
+check $([ "$rc" = 1 ] && [ "$(env_tag)" = sha-aaaaaaa ] && echo 0 || echo 1) 'failing image pull -> previous tag restored' "exit $rc, tag $(env_tag)"
 
 echo "== registry and input errors"
 setup; echo 1 >"$T/pull_status"; rc=$(run_agent)
