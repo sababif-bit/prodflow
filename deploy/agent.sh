@@ -3,6 +3,7 @@
 # CI moves the GHCR tag "prod" to every image that passed Test and Build. This agent pulls that tag, reads the commit the image was
 # built from (OCI label org.opencontainers.image.revision) and, when it differs from the running tag, calls deploy.sh (health gate +
 # automatic rollback). A tag that failed to deploy is remembered and not retried until a newer image appears.
+# Pause automatic deployments (e.g. after a manual rollback):  touch /var/lib/prodflow/hold   (resume: rm it).
 #
 #   deploy/agent.sh            (environment: PROD_IMAGE overrides the image reference, STATE_DIR the state directory)
 set -uo pipefail
@@ -18,6 +19,7 @@ main() {
   log() { echo "$(date -u +%FT%TZ) agent: $*"; }
 
   [ -r .env ] || { log ".env missing - bootstrap first"; exit 0; }
+  [ ! -e "$STATE_DIR/hold" ] || { log "hold file present - deployments paused"; exit 0; }
   if ! docker pull -q "$IMAGE:prod" >/dev/null 2>&1; then log "cannot pull $IMAGE:prod (registry unreachable or tag missing) - nothing to do"; exit 0; fi
   rev=$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE:prod" 2>/dev/null || true)
   if ! [[ $rev =~ ^[0-9a-f]{40}$ ]]; then log "prod image has no valid revision label - ignoring"; exit 0; fi

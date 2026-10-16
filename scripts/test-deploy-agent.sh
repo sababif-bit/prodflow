@@ -84,6 +84,10 @@ check $([ "$rc" = 2 ] && [ "$(ups)" = 0 ] && echo 0 || echo 1) 'deploy.sh reject
 setup; rm "$T/srv/repo/deploy/.env"; rc=$(run_agent)
 check $([ "$rc" = 0 ] && [ "$(ups)" = 0 ] && echo 0 || echo 1) 'missing .env -> agent does nothing' "exit $rc"
 
+echo "== hold file pauses deployments"
+setup; touch "$T/state/hold"; rc=$(run_agent)
+check $([ "$rc" = 0 ] && [ "$(ups)" = 0 ] && [ "$(env_tag)" = sha-aaaaaaa ] && echo 0 || echo 1) 'hold file present -> nothing is deployed' "exit $rc"
+
 echo "== scripts replaced during the deployment"
 setup; touch "$T/git_corrupt"; rc=$(run_agent)
 check $([ "$rc" = 0 ] && [ "$(env_tag)" = sha-bbbbbbb ] && ! grep -q CORRUPTED "$T/out.log" && echo 0 || echo 1) 'deployment completes although git checkout overwrote agent.sh and deploy.sh' "exit $rc"
