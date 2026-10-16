@@ -13,7 +13,9 @@ permissions:
 jobs:
   # 1) TEST - runs on every push and pull request
   test:
-    runs-on: ubuntu-latest
+    # Pinned (Issue #7): GitHub moves ubuntu-latest to Ubuntu 26.04 gradually from 2026-10-19 (actions/runner-images#14748).
+    # To revert, replace ubuntu-24.04 with ubuntu-latest in all three jobs.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: backend
@@ -37,7 +39,7 @@ jobs:
   build:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       image_tag: ${{ steps.meta.outputs.tag }}
     steps:
@@ -62,7 +64,7 @@ jobs:
   # 3) DEPLOY - to EC2 over SSH; skipped until the server secrets exist (day 2)
   deploy:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: production
     steps:
       - uses: actions/checkout@v4
