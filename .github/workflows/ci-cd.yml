@@ -35,11 +35,16 @@ jobs:
           name: test-reports
           path: backend/target/surefire-reports
 
-  # 2) BUILD - only on main, only if tests are green
+  # 2) BUILD - only on main, only if tests are green. Publishes sha-<commit>, latest and the pointer "prod" that the server agent
+  #    pulls (pull-based deployment, Issue #18: no inbound SSH). The commit is baked into the image (GET /version, OCI label).
   build:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    # only the newest main commit is built and rolled out; an older run is cancelled instead of racing the newer one
+    concurrency:
+      group: release
+      cancel-in-progress: true
     outputs:
       image_tag: ${{ steps.meta.outputs.tag }}
     steps:
@@ -57,51 +62,46 @@ jobs:
         with:
           context: backend
           push: true
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           tags: |
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
             ${{ steps.meta.outputs.image }}:latest
+            ${{ steps.meta.outputs.image }}:prod
 
-  # 3) DEPLOY - to EC2 over SSH; skipped until the server secrets exist (day 2)
-  deploy:
+  # 3) VERIFY - the server agent (deploy/agent.sh, systemd timer) pulls the new "prod" image, deploys it with a health gate and
+  #    rolls back on failure. This job proves the result from the outside: the public /version must report THIS commit and the
+  #    application must be healthy. It fails (and the pipeline is red) if the release does not arrive within the timeout.
+  #    Configure the repository VARIABLE PROD_APP_URL (e.g. https://app-xyz.duckdns.org, not a secret). Until it is set the job
+  #    reports "not configured" instead of silently passing.
+  verify:
     needs: build
     runs-on: ubuntu-24.04
-    environment: production
+    timeout-minutes: 20
+    env:
+      PROD_APP_URL: ${{ vars.PROD_APP_URL }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Check deployment secrets
-        id: check
-        env:
-          HOST: ${{ secrets.EC2_HOST }}
-        run: echo "ready=$([ -n "$HOST" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-      - name: Copy compose file to server
-        if: steps.check.outputs.ready == 'true'
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          source: deploy/docker-compose.prod.yml
-          target: /opt/prodflow
-          strip_components: 1
-      - name: Pull new image and restart
-        if: steps.check.outputs.ready == 'true'
-        uses: appleboy/ssh-action@v1.2.0
-        env:
-          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          envs: IMAGE_TAG
-          script: |
-            set -e
-            cd /opt/prodflow
-            sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${IMAGE_TAG}/" .env
-            docker compose -f docker-compose.prod.yml --env-file .env pull
-            docker compose -f docker-compose.prod.yml --env-file .env up -d
-            # Smoke test: fail the pipeline if the new version does not become healthy
-            for i in $(seq 1 30); do
-              curl -fs http://localhost/actuator/health | grep -q UP && echo "Deployed ${IMAGE_TAG}" && exit 0
-              sleep 5
-            done
-            echo "Health check failed for ${IMAGE_TAG}"; exit 1
+      - name: Check that the deployed revision matches this commit
+        run: |
+          if [ -z "$PROD_APP_URL" ]; then
+            echo "::warning::Verify not executed: repository variable PROD_APP_URL is not set (no deployment target configured yet)."
+            echo "### Verify NOT executed - PROD_APP_URL is not configured" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          case "$PROD_APP_URL" in https://*) ;; *) echo "::error::PROD_APP_URL must be an https URL"; exit 1 ;; esac
+          deadline=$((SECONDS + 900))
+          while [ $SECONDS -lt $deadline ]; do
+            rev=$(curl -fsS --max-time 10 "${PROD_APP_URL%/}/version" 2>/dev/null | jq -r '.revision // empty' 2>/dev/null || true)
+            if [ "$rev" = "$GITHUB_SHA" ]; then
+              health=$(curl -fsS --max-time 10 "${PROD_APP_URL%/}/actuator/health" 2>/dev/null | jq -r '.status // empty' 2>/dev/null || true)
+              if [ "$health" = UP ]; then
+                echo "Deployed ${GITHUB_SHA::7} is live and healthy at ${PROD_APP_URL}"
+                echo "### Verified: ${GITHUB_SHA::7} is live and healthy" >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+            fi
+            echo "waiting: running revision is '${rev:-<unreachable>}', expected ${GITHUB_SHA::7}"
+            sleep 15
+          done
+          echo "::error::Release ${GITHUB_SHA::7} did not become live at ${PROD_APP_URL} within 15 minutes (the agent rolls back unhealthy releases)"
+          exit 1
