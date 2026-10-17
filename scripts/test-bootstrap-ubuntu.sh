@@ -100,7 +100,7 @@ check $([ "$(inc $C stat -c '%a %U' /opt/prodflow/repo/deploy/.env)" = '600 root
 keys=$(inc $C sed -n 's/=.*//p' /opt/prodflow/repo/deploy/.env | sort | tr '\n' ' ')
 want="APP_HOST APP_URL AUTH_HOST AUTH_URL BACKEND_IMAGE DEMO_ADMIN_PASSWORD DEMO_PLANNER_PASSWORD DEMO_PURCHASER_PASSWORD DUCKDNS_TOKEN IMAGE_TAG KC_BOOTSTRAP_ADMIN_PASSWORD KC_BOOTSTRAP_ADMIN_USERNAME KEYCLOAK_DB_NAME KEYCLOAK_DB_PASSWORD KEYCLOAK_DB_USER PRODFLOW_DB_PASSWORD TLS_DIRECTIVE "
 check $([ "$keys" = "$want" ] && echo 0 || echo 1) 'deploy/.env has exactly the expected variables' "$keys"
-check $(inc $C grep -c $'\r' /opt/prodflow/repo/deploy/.env | grep -qx 0 && echo 0 || echo 1) 'deploy/.env contains no carriage return'
+check $([ "$(inc $C sh -c "tr -cd '\015' </opt/prodflow/repo/deploy/.env | wc -c" | tr -d ' \015')" = 0 ] && echo 0 || echo 1) 'deploy/.env contains no carriage return'
 check $(grep -q 'FAKE-TEST-TOKEN' "$WORK/bootstrap.log" && echo 1 || echo 0) 'the token never appears in the bootstrap output'
 check $(inc $C sh -c 'grep -q "domains=app-bootcheck,auth-bootcheck" /var/log/duckdns-stub.log' && echo 0 || echo 1) 'DuckDNS update was called for exactly the two names (stub)'
 check $(inc $C sh -c 'grep -q FAKE-TEST /var/log/duckdns-stub.log' && echo 1 || echo 0) 'the token is not in the stub log either'
@@ -113,10 +113,11 @@ for s in caddy backend keycloak db keycloak-db; do check $(printf '%s' "$states"
 check $(printf '%s' "$states" | grep -q 'keycloak-import-guard-1=exited' && echo 0 || echo 1) 'import guard ran once and exited'
 check $([ "$(inc $C docker inspect --format '{{.State.ExitCode}}' prodflow-prod-keycloak-import-guard-1)" = 0 ] && echo 0 || echo 1) 'import guard exit code 0'
 inc $C sh -c 'docker cp prodflow-prod-caddy-1:/data/caddy/pki/authorities/local/root.crt /tmp/caddy-root.crt' >/dev/null 2>&1
+jsonq() { inc $C sh -c "CURL_CA_BUNDLE=/tmp/caddy-root.crt curl -sS --max-time 20 $1 | jq -r $2" 2>/dev/null | tr -d '\015'; }   # jq exists in the box, not on the Windows host
 https() { inc $C sh -c "echo '127.0.0.1 $APP $AUTH' >>/etc/hosts 2>/dev/null; CURL_CA_BUNDLE=/tmp/caddy-root.crt curl -sS --max-time 20 $*"; }
-ver=$(https "https://$APP/version" | jq -r .revision 2>/dev/null)
+ver=$(jsonq "https://$APP/version" .revision)
 check $([ "$ver" = "$REV" ] && echo 0 || echo 1) 'GET /version over HTTPS returns the published image revision' "${ver:0:7} vs ${REV:0:7}"
-check $([ "$(https "https://$APP/actuator/health" | jq -r .status 2>/dev/null)" = UP ] && echo 0 || echo 1) '/actuator/health is UP over HTTPS (certificate trusted via Caddy CA)'
+check $([ "$(jsonq "https://$APP/actuator/health" .status)" = UP ] && echo 0 || echo 1) '/actuator/health is UP over HTTPS (certificate trusted via Caddy CA)'
 check $([ "$(https "-o /dev/null -w %{http_code} https://$AUTH/admin/")" = 404 ] && echo 0 || echo 1) 'Keycloak admin console is not public'
 echo "   waiting for the Keycloak realm (single Keycloak start on 2 GiB)..."
 kc=1; for _ in $(seq 1 60); do [ "$(https "-o /dev/null -w %{http_code} https://$AUTH/realms/prodflow/.well-known/openid-configuration")" = 200 ] && { kc=0; break; }; sleep 5; done
