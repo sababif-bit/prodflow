@@ -49,5 +49,17 @@ rm "$T/bin/dns_app.example.org"
 out=$(PATH="$T/bin:$PATH" DNS_WAIT_TRIES=30 DNS_WAIT_SECONDS=0.1 bash "$PRE" dns app.example.org 2>&1); rc=$?
 check $([ $rc -eq 0 ] && echo 0 || echo 1) 'DNS that appears while waiting is accepted' "exit $rc"
 out=$(run); rc=$?; check $([ $rc -eq 2 ] && echo 0 || echo 1) 'no mode -> usage error' "exit $rc"
+
+# --- bootstrap-server.sh wiring (it needs root + apt, so its order is pinned statically): it must stop BEFORE secrets are generated if the
+# --- image is missing, and BEFORE the stack/Caddy starts if DuckDNS or DNS is wrong.
+BS="$HERE/../deploy/bootstrap-server.sh"
+ln() { grep -n -- "$1" "$BS" | head -1 | cut -d: -f1; }
+l_strict=$(ln '^set -euo pipefail'); l_img=$(ln 'preflight.sh" image'); l_env=$(ln 'deploy/.env (secrets generated here)')
+l_duck=$(ln 'duckdns-update.sh'); l_dns=$(ln 'preflight.sh" dns'); l_start=$(ln 'deploy.sh" "$IMAGE_TAG"')
+check $([ -n "$l_strict" ] && [ -n "$l_img" ] && [ -n "$l_dns" ] && [ -n "$l_start" ] && echo 0 || echo 1) 'bootstrap calls preflight image and dns and deploy.sh'
+check $([ "$l_strict" -lt "$l_img" ] && [ "$l_img" -lt "$l_env" ] && echo 0 || echo 1) 'strict mode first; image check runs before any secret is generated' "$l_strict/$l_img/$l_env"
+check $([ "$l_env" -lt "$l_duck" ] && [ "$l_duck" -lt "$l_dns" ] && [ "$l_dns" -lt "$l_start" ] && echo 0 || echo 1) 'DuckDNS update, then DNS check, then the stack is started' "$l_duck/$l_dns/$l_start"
+check $(sed -n "${l_duck}p" "$BS" | grep -q 'exit 1' && echo 0 || echo 1) 'a failed DuckDNS update aborts the bootstrap'
+check $(sed -n "$((l_dns - 3)),${l_dns}p" "$BS" | grep -q 'SKIP_DNS_CHECK' && echo 0 || echo 1) 'the DNS check can only be skipped explicitly (SKIP_DNS_CHECK=1)'
 echo "test-preflight result: $PASS PASS, $FAIL FAIL"
 [ "$FAIL" -eq 0 ]
