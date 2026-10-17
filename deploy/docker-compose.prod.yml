@@ -76,7 +76,9 @@ services:
       # admin console only through the SSH tunnel (127.0.0.1:8180 on the server); Caddy does not route it
       KC_HOSTNAME_ADMIN: http://localhost:8180
       KC_HEALTH_ENABLED: "true"
-      JAVA_OPTS_KC_HEAP: -Xms128m -Xmx512m
+      # one node, one realm: smaller heap and no cluster cache (the sum of all mem_limit values stays below the 2 GiB of a t3.small)
+      JAVA_OPTS_KC_HEAP: -Xms64m -Xmx384m
+      KC_CACHE: local
       # placeholders of keycloak/prodflow-realm.json (first import only; validated by keycloak-import-guard)
       PRODFLOW_APP_URL: ${APP_URL:?public application URL, e.g. https://app.example.org}
       DEMO_PLANNER_PASSWORD: ${DEMO_PLANNER_PASSWORD:?}
@@ -86,7 +88,7 @@ services:
       - "127.0.0.1:8180:8080"
     volumes:
       - ../keycloak/prodflow-realm.json:/opt/keycloak/data/import/prodflow-realm.json:ro
-    mem_limit: 900m
+    mem_limit: 768m
     healthcheck:
       test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"status\": \"UP\"' <&3"]
       interval: 15s
@@ -129,7 +131,8 @@ services:
       POSTGRES_PASSWORD: ${PRODFLOW_DB_PASSWORD:?}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    mem_limit: 256m
+    command: ["postgres", "-c", "shared_buffers=32MB", "-c", "max_connections=30"]
+    mem_limit: 192m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U prodflow -d prodflow"]
       interval: 5s
@@ -146,7 +149,8 @@ services:
       POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?}
     volumes:
       - keycloak_pgdata:/var/lib/postgresql/data
-    mem_limit: 256m
+    command: ["postgres", "-c", "shared_buffers=32MB", "-c", "max_connections=30"]
+    mem_limit: 192m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${KEYCLOAK_DB_USER} -d ${KEYCLOAK_DB_NAME}"]
       interval: 5s

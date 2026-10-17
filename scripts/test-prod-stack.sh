@@ -71,7 +71,7 @@ dc down >/dev/null 2>&1
 
 echo "== start the stack"
 # memory sampler: peak usage per container from the first start until the end of the test (input for the instance-type decision)
-( while :; do docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' $(docker ps -q --filter "label=com.docker.compose.project=$PROJECT") 2>/dev/null; sleep 1; done ) >"$WORK/mem.log" 2>&1 &
+( while :; do ids=$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT"); [ -n "$ids" ] && docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' $ids 2>/dev/null; sleep 1; done ) >"$WORK/mem.log" 2>&1 &   # (empty id list would make docker stats show ALL containers)
 SAMPLER=$!
 dc up -d >"$WORK/up.log" 2>&1; check $? 'compose up -d succeeds' "$(tail -3 "$WORK/up.log" | tr '\n' ' ')"
 client() { # run a command in the compose network inside a small alpine toolbox (curl, openssl, jq, bash)
