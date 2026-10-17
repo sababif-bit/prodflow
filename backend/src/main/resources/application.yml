@@ -28,6 +28,8 @@ prodflow:
     jwk-set-uri: ${OIDC_JWK_SET_URI:http://localhost:8180/realms/prodflow/protocol/openid-connect/certs}
     # Tokens must be issued for this API ("aud" claim)
     audience: ${OIDC_AUDIENCE:prodflow-api}
+  # commit of the running build, set by the image (Dockerfile ARG GIT_SHA); shown by GET /version
+  revision: ${APP_REVISION:unknown}
 
 management:
   endpoints:
