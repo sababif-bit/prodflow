@@ -42,3 +42,12 @@ management:
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
+    # Swagger UI is the demo client: Keycloak login via Authorization Code + PKCE (public client, no secret).
+    # prompt=login always asks for credentials again, so an SSO session left over from the previous demo user is never
+    # used silently. It cannot switch users (Keycloak locks the username on that page): log out of Keycloak or use a
+    # second/private browser window to demo another role (see docs/architecture.md).
+    oauth:
+      client-id: prodflow-swagger
+      use-pkce-with-authorization-code-grant: true
+      additional-query-string-params:
+        prompt: login
