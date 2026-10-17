@@ -7,6 +7,7 @@
 # (a fake token is used; the stub logs only the names), the DNS pre-flight (SKIP_DNS_CHECK, unit-tested separately) and Let's Encrypt
 # (TLS_DIRECTIVE='tls internal' with test names). It never contacts the real DuckDNS names, never uses a real token, never touches AWS,
 # the development stack, or any .env file. The repository is cloned from the committed HEAD of this checkout (commit before running).
+# Optional: BOOT_CPUS=1 scripts/test-bootstrap-ubuntu.sh  (stress variant: half of the t3.small's CPU)
 # Run: scripts/test-bootstrap-ubuntu.sh        Exit: 0 = all passed, 1 = a check failed, 3 = pre-check failed
 set -u
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
@@ -78,7 +79,7 @@ EOF
 chmod +x "$WORK/stubs/"*
 
 echo "== start the clean Ubuntu 24.04 'server' (2 GiB RAM + 2 GiB swap, own Docker daemon)"
-docker run -d --name $C --privileged --memory 2g --memory-swap 4g -v $VOL:/var/lib/docker -v "$REPO:/src:ro" -v "$WORK_N/stubs:/stubs:ro" ubuntu:24.04 sleep infinity >/dev/null
+docker run -d --name $C --privileged --memory 2g --memory-swap 4g --cpus "${BOOT_CPUS:-2}" -v $VOL:/var/lib/docker -v "$REPO:/src:ro" -v "$WORK_N/stubs:/stubs:ro" ubuntu:24.04 sleep infinity >/dev/null
 check $? 'container started'
 check $([ "$(docker exec $C sh -c '. /etc/os-release; echo $VERSION_ID')" = 24.04 ] && echo 0 || echo 1) 'the base image is Ubuntu 24.04'
 check $([ "$(docker exec $C sh -c 'command -v docker || echo none')" = none ] && echo 0 || echo 1) 'Docker is NOT preinstalled (the bootstrap must install it)'
@@ -86,10 +87,12 @@ check $([ "$(docker exec $C sh -c 'command -v docker || echo none')" = none ] &&
 SAMPLER=$!
 
 echo "== bootstrap (real script, committed HEAD of this checkout)"
+T0=$SECONDS   # BOOT_CPUS=1 throttles the box to half of a t3.small's two vCPUs to see whether the health windows hold
 inc -e REPO_URL=file:///src -e APP_HOST=$APP -e AUTH_HOST=$AUTH -e IMAGE_TAG="$TAG" -e DUCKDNS_TOKEN=FAKE-TEST-TOKEN-NOT-SECRET \
    -e SKIP_DNS_CHECK=1 -e DEPLOY_SKIP_GIT=1 -e "TLS_DIRECTIVE=tls internal" -e DEPLOY_TIMEOUT=420 \
    $C bash /src/deploy/bootstrap-server.sh >"$WORK/bootstrap.log" 2>&1
 rc=$?
+echo "   bootstrap took $((SECONDS - T0)) s with ${BOOT_CPUS:-2} CPU(s), 2 GiB RAM"
 check $([ $rc -eq 0 ] && echo 0 || echo 1) 'bootstrap exits 0' "exit $rc"
 [ $rc -eq 0 ] || { echo "---- last lines of the bootstrap output:"; tail -25 "$WORK/bootstrap.log" | cut -c1-200; docker exec $C tail -5 /var/log/dockerd.log 2>/dev/null; }
 for marker in 'packages and Docker' 'swap' 'repository' 'pre-flight: image tag exists' 'preflight: image' 'deploy/.env' 'DuckDNS' 'start the stack' 'deployment agent' 'is healthy'; do

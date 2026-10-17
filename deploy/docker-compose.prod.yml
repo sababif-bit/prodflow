@@ -54,6 +54,14 @@ services:
       OIDC_AUDIENCE: prodflow-api
       SERVER_FORWARD_HEADERS_STRATEGY: framework
     mem_limit: 512m
+    # overrides the image's own HEALTHCHECK: Caddy waits for this one, and a cold Spring Boot start on a 2-vCPU burstable instance
+    # (Flyway, JIT, Keycloak starting at the same time) can take longer than the image default allows (about 130 s)
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q '\"status\":\"UP\"' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 150s
+      retries: 6
     depends_on:
       db:
         condition: service_healthy
