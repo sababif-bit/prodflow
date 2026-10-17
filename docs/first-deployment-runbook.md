@@ -15,12 +15,12 @@ Stand: 17.10.2026. Dieses Runbook nutzt ausschließlich die vorhandenen Projekts
 
 | Bereich | Stand | Beleg |
 |---|---|---|
-| Bootstrap auf **sauberem Ubuntu 24.04** mit 2 GiB RAM + 2 GiB Swap (eigener Docker-Daemon in einem Wegwerf-Container) | ✅ 46/46 | `scripts/test-bootstrap-ubuntu.sh`: Docker-Installation, Compose-Plugin, Klon, `.env` (Rechte 600, ohne CR), echtes GHCR-Image, alle Dienste laufen, HTTPS, echte Logins, Agent, Wiederholbarkeit, Abbruch bei falschem Tag |
+| Bootstrap auf **sauberem Ubuntu 24.04** mit 2 GiB RAM + 2 GiB Swap (eigener Docker-Daemon in einem Wegwerf-Container) | ✅ 48/48 (auch mit halber CPU: `BOOT_CPUS=1`, 177 s) | `scripts/test-bootstrap-ubuntu.sh`: Docker-Installation, Compose-Plugin, Klon, `.env` (Rechte 600, ohne CR), echtes GHCR-Image, alle Dienste laufen, HTTPS, echte Logins, Agent, Token in keinem Container, Wiederholbarkeit, Abbruch bei falschem Tag; Bootstrap-Dauer ca. 2–3 Minuten |
 | Produktionsstapel (Caddy, Backend, Keycloak, 2× PostgreSQL) | ✅ 51/51 | `scripts/test-prod-stack.sh`: Pfad-Allowlist, Ports, Rollen, Neustart, keine Geheimnisse in Logs, Speicher-Spitzen |
 | Caddyfile in allen Modi (Produktion, Staging, `tls internal`) | ✅ 9/9 | `scripts/test-caddyfile.sh` |
 | Pre-flight (Image-Tag, DNS) und Reihenfolge im Bootstrap | ✅ 14/14 | `scripts/test-preflight.sh` |
 | Agent, Rollback, Pausenschalter | ✅ 23/23 | `scripts/test-deploy-agent.sh` |
-| Speicher | ✅ Spitze aller Container zusammen ≈ **0,92 GiB** (Keycloak ≈ 535 MiB, Backend ≈ 295 MiB, Datenbanken ≈ 75 MiB, Caddy ≈ 16 MiB); im 2-GiB-Testkasten insgesamt ≤ 1,6 GiB ohne OOM | `test-prod-stack.sh`, `test-bootstrap-ubuntu.sh` |
+| Speicher | ✅ Spitze aller Container zusammen ≈ **0,95 GiB** (Keycloak ≈ 560 MiB, Backend ≈ 300 MiB, Datenbanken ≈ 75 MiB, Caddy ≈ 16 MiB); im 2-GiB-Testkasten insgesamt ≤ 1,6 GiB ohne OOM | `test-prod-stack.sh`, `test-bootstrap-ubuntu.sh` |
 | Echte Zertifikate (Let's Encrypt), echtes DuckDNS, echte EC2-Instanz, Zeitverhalten auf der `t3.small` | ❌ **nicht verifiziert** | erst beim ersten echten Lauf prüfbar |
 | GitHub-Schritt „Verify" mit gesetzter `PROD_APP_URL` | ❌ nicht verifiziert | erst nach Schritt 7 |
 

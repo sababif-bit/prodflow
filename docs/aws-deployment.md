@@ -30,7 +30,7 @@ einen SSH-Tunnel erreichbar. Zwei DuckDNS-Namen (`app-…` und `auth-…`).
 - **Metadaten-Dienst:** beim Anlegen *IMDSv2 erforderlich* (Metadata version V2 only) und *Hop limit 1* wählen und der Instanz **kein IAM-Instanzprofil** geben.
   So kann ein Container (z. B. bei einer SSRF-Lücke im Backend) keine AWS-Zugangsdaten abgreifen; es gibt auch keine, die man stehlen könnte.
 - **SSH nur von der eigenen IP:** wechselt Ihre IP (Heimnetz, Hotspot), sperren Sie sich aus. Ersatz: EC2 Instance Connect im Browser (falls die Sandbox es erlaubt) oder die Regel in der Konsole anpassen.
-- **Speicher:** `t3.small` (2 GB) + 2 GB Swap reicht für den gemessenen Betrieb (Spitze aller Container zusammen ca. 0,92 GiB; im 2-GiB-Testkasten insgesamt ≤ 1,6 GiB ohne OOM), aber der Start von Keycloak (`start` baut zuerst) hat eine Spitze und Ubuntu selbst braucht ca. 0,2–0,3 GiB. Bei Out-of-Memory-Meldungen
+- **Speicher:** `t3.small` (2 GB) + 2 GB Swap reicht für den gemessenen Betrieb (Spitze aller Container zusammen ca. 0,95 GiB; im 2-GiB-Testkasten insgesamt ≤ 1,6 GiB ohne OOM), aber der Start von Keycloak (`start` baut zuerst) hat eine Spitze und Ubuntu selbst braucht ca. 0,2–0,3 GiB. Bei Out-of-Memory-Meldungen
   (`dmesg | grep -i oom`) oder hoher Swap-Nutzung auf `t3.medium` wechseln (Instanz stoppen, Typ ändern, starten; Elastic IP bleibt).
 - **Kosten (Schätzung, in der AWS-Preisliste prüfen):** `t3.small` ca. 0,02 $/h, `t3.medium` ca. 0,05 $/h in eu-central-1; dazu öffentliche IPv4 ca. 0,005 $/h und 20 GB EBS ca. 2 $/Monat. Für ca. 10 Tage (bis 26.10.) ergibt das etwa 6 $ (small)
   bzw. 13 $ (medium) und liegt damit unter 15 $, wenn danach abgebaut wird (Issue #13). Instanz nicht unnötig 24/7 laufen lassen, falls die Sandbox das erlaubt.

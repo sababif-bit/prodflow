@@ -75,6 +75,13 @@ jobs:
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
             ${{ steps.meta.outputs.image }}:latest
             ${{ steps.meta.outputs.image }}:prod
+      - name: Summary (what a green build means)
+        run: |
+          {
+            echo "### Image published: ${{ steps.meta.outputs.tag }} (also moved the pointer \`prod\`)"
+            echo "A green build means **the image exists**, not that it is deployed. The server agent pulls it within about a minute;"
+            echo "the **Verify** job proves it from outside (needs the repository variable \`PROD_APP_URL\`; a grey/skipped Verify = nobody checked)."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # 3) VERIFY - the server agent (deploy/agent.sh, systemd timer) pulls the new "prod" image, deploys it with a health gate and
   #    rolls back on failure. This job proves the result from the outside: the public /version must report THIS commit and the
