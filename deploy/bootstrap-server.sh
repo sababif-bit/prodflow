@@ -17,15 +17,16 @@ SWAP_GB=${SWAP_GB:-2}
 
 echo "== packages and Docker"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq ca-certificates curl git openssl jq >/dev/null
+# a freshly started instance often runs unattended-upgrades/cloud-init for a few minutes and holds the dpkg lock: wait for it instead of failing
+apt-get -o DPkg::Lock::Timeout=300 update -qq
+apt-get -o DPkg::Lock::Timeout=300 install -y -qq ca-certificates curl git openssl jq >/dev/null
 if ! command -v docker >/dev/null 2>&1; then
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
   chmod a+r /etc/apt/keyrings/docker.asc
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" >/etc/apt/sources.list.d/docker.list
-  apt-get update -qq
-  apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null
+  apt-get -o DPkg::Lock::Timeout=300 update -qq
+  apt-get -o DPkg::Lock::Timeout=300 install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin >/dev/null
 fi
 systemctl enable --now docker >/dev/null
 
@@ -47,7 +48,11 @@ echo "== deploy/.env (secrets generated here)"
 if [ -e "$DEPLOY/.env" ]; then
   echo "deploy/.env already exists - keeping it (delete it deliberately to regenerate; that also requires fresh volumes)"
 else
-  if [ -z "${DUCKDNS_TOKEN:-}" ]; then read -r -s -p "DuckDNS token (input hidden): " DUCKDNS_TOKEN; echo; fi
+  if [ -z "${DUCKDNS_TOKEN:-}" ]; then
+    read -r -s -p "DuckDNS token (input hidden): " DUCKDNS_TOKEN; echo
+  else
+    echo "NOTE: the DuckDNS token came from the environment. If you typed it on a command line it is in your shell history - prefer the hidden prompt and rotate the token if in doubt." >&2
+  fi
   gen() { openssl rand -base64 18 | tr -d '\r\n'; }
   umask 077
   cat >"$DEPLOY/.env" <<ENVEOF
@@ -68,6 +73,18 @@ DEMO_PURCHASER_PASSWORD=$(gen)
 DEMO_ADMIN_PASSWORD=$(gen)
 DUCKDNS_TOKEN=$DUCKDNS_TOKEN
 ENVEOF
+  # optional: ACME directory, e.g. the Let's Encrypt STAGING directory for a rehearsal (see docs/first-deployment-runbook.md); not for the real run
+  case "${ACME_CA:-}" in
+    '') ;;
+    https://*) case "$ACME_CA" in *[!A-Za-z0-9./:_-]*) echo "ACME_CA contains unexpected characters" >&2; exit 2 ;; *) printf 'ACME_CA=%s\n' "$ACME_CA" >>"$DEPLOY/.env" ;; esac ;;
+    *) echo "ACME_CA must be an https URL" >&2; exit 2 ;;
+  esac
+  # optional: Caddy TLS directive, only for tests (e.g. 'tls internal'); never needed for the real run
+  case "${TLS_DIRECTIVE:-}" in
+    *"'"*) echo "TLS_DIRECTIVE must not contain a single quote" >&2; exit 2 ;;
+    '') ;;
+    *) printf "TLS_DIRECTIVE='%s'\n" "$TLS_DIRECTIVE" >>"$DEPLOY/.env" ;;
+  esac
   chmod 600 "$DEPLOY/.env"
   unset DUCKDNS_TOKEN
 fi

@@ -3,6 +3,9 @@
 # "tls internal" in the local test, see deploy/docker-compose.local-test.yml).
 {
 	admin off
+	# ACME directory: production Let's Encrypt by default; set ACME_CA in deploy/.env to the STAGING directory for rehearsals
+	# (https://acme-staging-v02.api.letsencrypt.org/directory) so that failed attempts do not use up the production rate limits.
+	acme_ca {$ACME_CA:https://acme-v02.api.letsencrypt.org/directory}
 	servers {
 		protocols h1 h2
 	}

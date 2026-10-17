@@ -9,7 +9,7 @@
 set -uo pipefail
 # Whole script inside main(): the repository is replaced during a deployment (see deploy.sh), parse everything first.
 main() {
-  cd "$(dirname "$0")"
+  cd "$(dirname "$0")" || exit 1
   IMAGE=${PROD_IMAGE:-$(sed -n 's/^BACKEND_IMAGE=//p' .env 2>/dev/null | tail -1 | tr -d '\r')}
   IMAGE=${IMAGE:-ghcr.io/sababif-bit/prodflow}
   STATE_DIR=${STATE_DIR:-/var/lib/prodflow}
