@@ -104,6 +104,8 @@ check $([ "$(inc $C sh -c "tr -cd '\015' </opt/prodflow/repo/deploy/.env | wc -c
 check $(grep -q 'FAKE-TEST-TOKEN' "$WORK/bootstrap.log" && echo 1 || echo 0) 'the token never appears in the bootstrap output'
 check $(inc $C sh -c 'grep -q "domains=app-bootcheck,auth-bootcheck" /var/log/duckdns-stub.log' && echo 0 || echo 1) 'DuckDNS update was called for exactly the two names (stub)'
 check $(inc $C sh -c 'grep -q FAKE-TEST /var/log/duckdns-stub.log' && echo 1 || echo 0) 'the token is not in the stub log either'
+check $(inc $C sh -c 'docker inspect $(docker ps -aq) | grep -q FAKE-TEST-TOKEN' && echo 1 || echo 0) 'the token is in no container environment (it lives in deploy/.env only)'
+check $(inc $C sh -c 'docker compose --env-file /opt/prodflow/repo/deploy/.env -f /opt/prodflow/repo/deploy/docker-compose.prod.yml config | grep -q FAKE-TEST-TOKEN' && echo 1 || echo 0) 'the token does not appear in the resolved Compose configuration'
 check $(inc $C sh -c 'docker compose --env-file /opt/prodflow/repo/deploy/.env -f /opt/prodflow/repo/deploy/docker-compose.prod.yml config --quiet' >/dev/null 2>&1 && echo 0 || echo 1) 'docker compose config accepts the generated .env'
 check $(inc $C sh -c 'test -f /etc/systemd/system/prodflow-agent.timer && grep -q "enable --now prodflow-agent.timer" /var/log/systemctl-stub.log' && echo 0 || echo 1) 'agent unit installed and its timer enabled'
 

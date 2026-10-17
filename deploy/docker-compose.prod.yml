@@ -25,6 +25,7 @@ services:
       APP_HOST: ${APP_HOST:?public hostname of the application}
       AUTH_HOST: ${AUTH_HOST:?public hostname of Keycloak}
       TLS_DIRECTIVE: ${TLS_DIRECTIVE:-}
+      ACME_CA: ${ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}
     ports:
       - "${PUBLISH_BIND:-0.0.0.0}:${HTTP_PUBLISH:-80}:80"
       - "${PUBLISH_BIND:-0.0.0.0}:${HTTPS_PUBLISH:-443}:443"

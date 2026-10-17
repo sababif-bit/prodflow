@@ -68,7 +68,13 @@ DEMO_PURCHASER_PASSWORD=$(gen)
 DEMO_ADMIN_PASSWORD=$(gen)
 DUCKDNS_TOKEN=$DUCKDNS_TOKEN
 ENVEOF
-  # optional: Caddy TLS directive, e.g. a Let's Encrypt STAGING rehearsal (see docs/aws-deployment.md); never needed for the real run
+  # optional: ACME directory, e.g. the Let's Encrypt STAGING directory for a rehearsal (see docs/first-deployment-runbook.md); not for the real run
+  case "${ACME_CA:-}" in
+    '') ;;
+    https://*) case "$ACME_CA" in *[!A-Za-z0-9./:_-]*) echo "ACME_CA contains unexpected characters" >&2; exit 2 ;; *) printf 'ACME_CA=%s\n' "$ACME_CA" >>"$DEPLOY/.env" ;; esac ;;
+    *) echo "ACME_CA must be an https URL" >&2; exit 2 ;;
+  esac
+  # optional: Caddy TLS directive, only for tests (e.g. 'tls internal'); never needed for the real run
   case "${TLS_DIRECTIVE:-}" in
     *"'"*) echo "TLS_DIRECTIVE must not contain a single quote" >&2; exit 2 ;;
     '') ;;
