@@ -76,10 +76,17 @@ echo "== start the stack"
 chmod +x "$DEPLOY/deploy.sh"
 DEPLOY_SKIP_GIT="${DEPLOY_SKIP_GIT:-0}" bash "$DEPLOY/deploy.sh" "$IMAGE_TAG"
 
+echo "== deployment agent (pull-based: checks GHCR tag 'prod' every minute, no inbound access needed)"
+install -m 0644 "$DEPLOY/prodflow-agent.service" "$DEPLOY/prodflow-agent.timer" /etc/systemd/system/
+chmod +x "$DEPLOY/agent.sh"
+systemctl daemon-reload
+systemctl enable --now prodflow-agent.timer >/dev/null
+
 cat <<'DONE'
 
 Done. Next:
   - Read the demo passwords ONLY on the server, when you need them:  sudo grep '^DEMO_' /opt/prodflow/repo/deploy/.env
   - Verify from your laptop: scripts/smoke-auth.sh (or smoke-auth.ps1) against the https URLs.
+  - New releases arrive by themselves: CI moves the GHCR tag 'prod'; the agent deploys it (log: journalctl -u prodflow-agent).
   - Keycloak administration: SSH tunnel  ssh -L 8180:127.0.0.1:8180 <user>@<server>  then http://localhost:8180
 DONE

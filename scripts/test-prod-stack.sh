@@ -103,6 +103,8 @@ c=$(code "$APP/api/items"); check $([ "$c" = 401 ] && echo 0 || echo 1) 'app hos
 docs=$(client "curl -sk $APP/v3/api-docs" 2>/dev/null)
 check $(printf '%s' "$docs" | grep -q "$AUTH/realms/prodflow/protocol/openid-connect/auth" && echo 0 || echo 1) 'OpenAPI OAuth2 scheme points at the public HTTPS Keycloak URL'
 check $(printf '%s' "$docs" | grep -q '"url":"https://app.prodflow.test' && echo 0 || echo 1) 'OpenAPI server URL honours the proxy headers (https app host)'
+spoof=$(client "curl -sk -H 'Forwarded: host=evil.test;proto=http' -H 'X-Forwarded-Prefix: /evil' -H 'X-Forwarded-Host: evil.test' $APP/v3/api-docs" 2>/dev/null)
+check $(printf '%s' "$spoof" | grep -q 'evil' && echo 1 || echo 0) 'client-supplied Forwarded/X-Forwarded-* headers cannot change generated URLs'
 hdr=$(client "curl -skI $APP/swagger-ui/index.html" 2>/dev/null | tr -d '\r')
 check $(printf '%s' "$hdr" | grep -qi '^strict-transport-security' && echo 0 || echo 1) 'HSTS header is sent'
 check $(printf '%s' "$hdr" | grep -qi '^server:' && echo 1 || echo 0) 'Server header is removed'

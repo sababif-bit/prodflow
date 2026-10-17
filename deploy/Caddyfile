@@ -17,10 +17,19 @@
 	}
 }
 
+# Caddy overwrites X-Forwarded-For/-Proto/-Host itself; these are passed through unchanged unless removed here, and Spring's
+# ForwardedHeaderFilter would honour "Forwarded" (client-controlled host/proto in generated URLs).
+(strip_forwarded) {
+	request_header -Forwarded
+	request_header -X-Forwarded-Prefix
+	request_header -X-Forwarded-Port
+}
+
 # ---- application: Swagger UI + API (Spring Security decides who may do what) ----
 {$APP_HOST} {
 	{$TLS_DIRECTIVE}
 	import security_headers
+	import strip_forwarded
 	encode zstd gzip
 
 	# only the health endpoint of the actuator is public; /actuator/info stays ADMIN-only inside the backend and is not routed
@@ -40,6 +49,7 @@
 {$AUTH_HOST} {
 	{$TLS_DIRECTIVE}
 	import security_headers
+	import strip_forwarded
 
 	@public path /realms/prodflow /realms/prodflow/* /resources/* /robots.txt
 	handle @public {

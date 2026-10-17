@@ -239,10 +239,35 @@ Internet ──443──► Caddy (HTTPS, Let's-Encrypt-Zertifikate)
 - **Offen/Risiken:** Zertifikate (Let's Encrypt) und DuckDNS sind erst auf AWS prüfbar; Swagger öffentlich; die Demo-Passwörter stehen
   in `docker inspect` (wie das Admin-Passwort); der alte SSH-Deploy-Job im Workflow nutzt die neue Compose-Datei nicht und wird in #18 ersetzt.
 
+## Pipeline: Test → Build → Deploy → Verify (Issue #18, pull-basiert)
+
+Umgesetzt in `.github/workflows/ci-cd.yml`, `deploy/agent.sh`, `deploy/deploy.sh`; lokal getestet, **noch nicht auf AWS**.
+
+1. **Test** (jeder Push/PR): `mvn verify` mit Testcontainers.
+2. **Build** (nur `main`, nur bei grünem Test): Image mit dem Commit (`--build-arg GIT_SHA`, Label `org.opencontainers.image.revision`,
+   `GET /version`) nach GHCR als `sha-<commit>`, `latest` und dem Zeiger **`prod`**. `concurrency` bricht ältere Läufe ab, damit nur der
+   neueste `main`-Stand ausgerollt wird.
+3. **Deploy (pull-basiert, ohne eingehendes SSH):** Ein systemd-Timer auf dem Server startet jede Minute `deploy/agent.sh`. Der Agent
+   zieht `prod`, liest die Revision aus dem Label und ruft bei einer Abweichung `deploy/deploy.sh sha-<commit>` auf: Repository auf den
+   Commit stellen, `IMAGE_TAG` setzen, Stapel starten, auf `healthy` warten (Standard 240 s), sonst **automatische Rückkehr** zum
+   vorherigen Tag. Ein fehlgeschlagener Tag wird gemerkt und nicht erneut versucht, bis ein neueres Image erscheint. Beide Skripte
+   laufen vollständig in `main()`, weil der Checkout sie während der Ausführung ersetzt.
+4. **Verify** (`verify`-Job): fragt die öffentliche Adresse (Repository-Variable `PROD_APP_URL`, kein Geheimnis) bis zu 15 Minuten nach
+   `/version`, bis die Revision **dieser** Commit ist, und prüft `/actuator/health`. Sonst ist die Pipeline rot. Ist die Variable nicht
+   gesetzt, meldet der Job „nicht ausgeführt" (Warnung), er besteht nicht stillschweigend.
+- **Sicherheit:** Der Server nimmt keine eingehenden Verwaltungsverbindungen für Deployments an (kein SSH-Deploy); der Agent zieht nur aus dem eigenen GHCR-Paket. Vertrauensanker ist
+  das Repository (`main`) und die CI; der Agent läuft als root (Docker) auf einer wegwerfbaren Demo-Instanz.
+- **Rollback von Hand:** `touch /var/lib/prodflow/hold` (pausiert den Agenten), dann `deploy/deploy.sh sha-<früherer Commit>`; fortsetzen mit
+  `rm /var/lib/prodflow/hold`. Ohne Pause würde der Agent innerhalb einer Minute wieder das Image des Zeigers `prod` ausrollen.
+- **Test:** `scripts/test-deploy-agent.sh` (20 Fälle mit Attrappen für `docker`/`git`: keine Änderung, Deploy, Rollback, Fehlermerker,
+  Registry-Fehler, ungültige Eingaben, Pausendatei, Ersetzen der Skripte während des Laufs).
+- **Offen:** Ein echter Lauf auf GitHub (Push nötig, Freigabe) und auf AWS; `PROD_APP_URL` setzen; GHCR-Zeiger-Tagging mit `GITHUB_TOKEN`
+  ist in `docker/build-push-action` üblich, aber hier noch nicht gelaufen.
+
 ## Deployment-Einrichtung
 
-> **Hinweis:** Diese Anleitung ist der ursprüngliche Plan (ADR #11) und wurde noch nicht
-> ausgeführt. Mit ADR #15 sind Teile überholt: zusätzlich Port 443 für Caddy, Keycloak und
+> **Hinweis:** Diese Anleitung ist der ursprüngliche Plan (ADR #11) und **überholt** durch die Abschnitte „Produktionsstapel" und
+> „Pipeline" sowie `docs/aws-deployment.md` (kein SSH-Deploy mehr, kein RDS vorgesehen); sie wurde nie ausgeführt. Mit ADR #15 sind Teile überholt: zusätzlich Port 443 für Caddy, Keycloak und
 > PostgreSQL als Container auf der EC2-Instanz; der Wechsel auf RDS (Schritt 4) ist nicht
 > entschieden.
 
