@@ -205,10 +205,39 @@ Internet ──443──► Caddy (HTTPS, Let's-Encrypt-Zertifikate)
 ```
 
 - Nicht entschieden: RDS statt PostgreSQL-Container, Nginx statt Caddy.
-- `deploy/docker-compose.prod.yml` enthält derzeit nur das Backend auf Port 80 und
-  muss für diesen Vorschlag erweitert werden.
-- Offen: Keycloak-Produktionsmodus, öffentliche Issuer-URL, Domain/DNS, Backups der
-  Datenbank-Volumes.
+- Der Produktionsstapel ist **lokal umgesetzt und getestet** (nächster Abschnitt); ein AWS-Deployment hat noch nicht stattgefunden.
+
+### Produktionsstapel (Issues #14/#16, lokal verifiziert, nicht auf AWS)
+
+`deploy/docker-compose.prod.yml` (ersetzt die frühere Datei mit nur dem Backend), `deploy/Caddyfile`, `deploy/.env.example`,
+`deploy/deploy.sh`, `deploy/bootstrap-server.sh`, `scripts/duckdns-update.sh`.
+
+- **Dienste:** `caddy` (einziger Dienst mit öffentlichen Ports 80/443), `backend` (Image aus GHCR, Tag aus `IMAGE_TAG`), `keycloak`
+  (`start`, Produktionsmodus), `db`, `keycloak-db`, `keycloak-import-guard`. Speichergrenzen je Container (Caddy 96 MB, Backend 512 MB,
+  Keycloak 900 MB, je 256 MB für die Datenbanken).
+- **Zwei Hostnamen:** `APP_HOST` (Swagger UI und API) und `AUTH_HOST` (Keycloak), je mit eigenem Zertifikat (Caddy, Let's Encrypt).
+  `APP_URL`/`AUTH_URL` sind die vollständigen https-Adressen. Keycloak: `KC_HOSTNAME=<AUTH_URL>`, `KC_PROXY_HEADERS=xforwarded`; der
+  Issuer in den Tokens ist damit immer die öffentliche Adresse. Das Backend prüft den Issuer gegen diese Adresse, holt die Schlüssel aber
+  intern über `http://keycloak:8080/...`.
+- **Pfad-Allowlist für Keycloak (Caddy):** öffentlich nur `/realms/prodflow/*`, `/resources/*`, `/robots.txt`. Admin-Konsole,
+  Admin-REST-API, Master-Realm, `/metrics`, `/health` und Umgehungsversuche (`..`, `%2e%2e`, `..%2f`) liefern 404. Die Verwaltung läuft
+  über einen SSH-Tunnel auf `127.0.0.1:8180` des Servers (`KC_HOSTNAME_ADMIN=http://localhost:8180`).
+- **Backend-Pfade:** `/actuator/health` öffentlich; alle anderen `/actuator/*`-Pfade (auch `/actuator/info`) routet Caddy nicht.
+  Swagger UI und `/v3/api-docs` sind als dokumentierte Demo-Ausnahme öffentlich (Entscheidung D-8); die API selbst verlangt Tokens.
+- **Pflichtvariablen:** alle Geheimnisse und Adressen mit `${VAR:?}`: Fehlt eine, startet nichts. Der Import-Guard läuft hier mit den
+  `:?`-Werten, es gibt keine Standardwerte.
+- **Server-`.env`:** wird auf dem Server von `bootstrap-server.sh` mit zufälligen Geheimnissen erzeugt (Rechte 600, nie in Git/Chat/user-data).
+- **Deployment-Einheit:** `deploy/deploy.sh sha-<commit>` stellt das Repository auf den Commit, setzt `IMAGE_TAG`, startet den Stapel
+  und wartet auf `healthy`; sonst Rückkehr zum vorherigen Tag. Dasselbe Skript nutzt später der Pull-Agent (Issue #18).
+- **Speicher (gemessen, lokaler Lauf nach Login-, API- und Neustarttests):** Keycloak ≈ 490 MB, Backend ≈ 305 MB, Datenbanken ≈ 85 MB,
+  Caddy ≈ 16 MB, zusammen ≈ 0,9 GB. Eine `t3.small` (2 GB) reicht für den Demolauf voraussichtlich; endgültig nach Messung auf der
+  Instanz (`docs/aws-deployment.md`).
+- **Automatische Prüfung:** `scripts/test-prod-stack.sh` startet den Stapel als eigenes Compose-Projekt (Port 18443/18181, zufällige Geheimnisse,
+  interne CA, Hostnamen `app.prodflow.test`/`auth.prodflow.test` im Docker-Netz) und prüft Pflichtvariablen, Import-Guard, HTTPS, echte
+  Logins mit PKCE, Token-Refresh, API 401/200/403, die Pfad-Allowlist, veröffentlichte Ports, Neustart und Geheimnisse in Logs
+  (`scripts/smoke-auth.sh`, Bash, auch für die Verify-Stufe auf Linux).
+- **Offen/Risiken:** Zertifikate (Let's Encrypt) und DuckDNS sind erst auf AWS prüfbar; Swagger öffentlich; die Demo-Passwörter stehen
+  in `docker inspect` (wie das Admin-Passwort); der alte SSH-Deploy-Job im Workflow nutzt die neue Compose-Datei nicht und wird in #18 ersetzt.
 
 ## Deployment-Einrichtung
 

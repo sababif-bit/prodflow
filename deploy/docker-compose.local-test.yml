@@ -1,0 +1,15 @@
+# Local test of the production stack (scripts/test-prod-stack.sh). Layered on top of docker-compose.prod.yml:
+#   docker compose -p prodflow-prodcheck -f docker-compose.prod.yml -f docker-compose.local-test.yml ...
+# - Caddy answers the test hostnames on the Compose network (aliases), certificates from Caddy's internal CA (TLS_DIRECTIVE).
+# - Keycloak's admin port is remapped so it cannot collide with the development stack on 127.0.0.1:8180.
+# Never used on a server.
+services:
+  caddy:
+    networks:
+      default:
+        aliases:
+          - app.prodflow.test
+          - auth.prodflow.test
+  keycloak:
+    ports: !override
+      - "127.0.0.1:${TEST_ADMIN_PUBLISH:-18181}:8080"
