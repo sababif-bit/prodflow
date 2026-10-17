@@ -3,8 +3,8 @@ name: CI/CD
 on:
   push:
     branches: [main]
+  # every pull request, also those stacked on another feature branch (their base is not main)
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
