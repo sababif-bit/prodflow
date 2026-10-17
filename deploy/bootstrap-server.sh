@@ -40,6 +40,9 @@ mkdir -p "$BASE"
 if [ -d "$BASE/repo/.git" ]; then git -C "$BASE/repo" fetch --quiet origin; else git clone --quiet "$REPO_URL" "$BASE/repo"; fi
 DEPLOY="$BASE/repo/deploy"
 
+echo "== pre-flight: image tag exists in the registry"
+bash "$DEPLOY/preflight.sh" image "${BACKEND_IMAGE:-ghcr.io/sababif-bit/prodflow}:$IMAGE_TAG"
+
 echo "== deploy/.env (secrets generated here)"
 if [ -e "$DEPLOY/.env" ]; then
   echo "deploy/.env already exists - keeping it (delete it deliberately to regenerate; that also requires fresh volumes)"
@@ -70,7 +73,11 @@ ENVEOF
 fi
 
 echo "== DuckDNS"
-bash "$BASE/repo/scripts/duckdns-update.sh" "$DEPLOY/.env" || echo "WARNING: DuckDNS update failed - names will not resolve to this server until it succeeds" >&2
+bash "$BASE/repo/scripts/duckdns-update.sh" "$DEPLOY/.env" || { echo "ERROR: DuckDNS update failed (token/names wrong?) - not starting the stack, Caddy could not get certificates" >&2; exit 1; }
+if [ "${SKIP_DNS_CHECK:-0}" != 1 ]; then
+  echo "== pre-flight: both names must resolve to this server before Caddy starts (up to 5 minutes)"
+  bash "$DEPLOY/preflight.sh" dns "$APP_HOST" "$AUTH_HOST"
+fi
 
 echo "== start the stack"
 chmod +x "$DEPLOY/deploy.sh"
