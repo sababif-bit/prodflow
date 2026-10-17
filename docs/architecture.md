@@ -264,6 +264,25 @@ Umgesetzt in `.github/workflows/ci-cd.yml`, `deploy/agent.sh`, `deploy/deploy.sh
 - **Offen:** Ein echter Lauf auf GitHub (Push nötig, Freigabe) und auf AWS; `PROD_APP_URL` setzen; GHCR-Zeiger-Tagging mit `GITHUB_TOKEN`
   ist in `docker/build-push-action` üblich, aber hier noch nicht gelaufen.
 
+## Demo-Daten zurücksetzen und Workflow-Prüfung (Issues #9/#19)
+
+`scripts/reset-demo-data.sh` setzt **nur die Anwendungsdatenbank** auf den bekannten Ausgangszustand zurück (lokal und auf dem Server, Bash + Docker):
+in **einer** Transaktion werden `item`, `bom_line`, `production_order` und `purchase_request` geleert (Identitäten beginnen wieder bei 1) und
+`backend/src/main/resources/db/demo/V100__demo_data.sql` (dieselbe Datei, die Flyway im Profil `demo` lädt = einzige Quelle) geladen; danach prüft das Skript
+in der Transaktion den Ausgangszustand (MR-200 0, SC-M8 25, PL-ST3 30, PR-40 50, BR-L60 100, 4 Stücklistenzeilen, keine Aufträge/Bestellanforderungen) und
+bricht bei Abweichung ab. Der nächste Auftrag heißt wieder `FA-00001`.
+
+- **Sicherungen vor jeder Änderung (Abbruch mit Exit 2):** Marker `PRODFLOW_DEMO_RESET=allowed` in der angegebenen Umgebungsdatei (ein Spring-Profil reicht nicht);
+  Compose-Projekt ausdrücklich angegeben; Dienst genau `db` (`keycloak-db` wird abgelehnt); Datenbankname genau `prodflow` (Kommandozeile, Container, `current_database()`);
+  genau ein laufender Container; Schema-Fingerabdruck (Anwendungstabellen vorhanden, **keine** Keycloak-Tabellen, Flyway-Versionen 1 und 100).
+- **Bedienung:** `--dry-run` zeigt Ziel und Plan ohne Änderung; ohne `--yes` wird nichts ausgeführt (Exit 3). Keine Geheimnisse werden gelesen oder ausgegeben (SQL läuft im Container über den lokalen Socket); Keycloak wird nie angefasst.
+- **Lokal:** `PRODFLOW_DEMO_RESET=allowed` in die lokale `.env` eintragen (nur der Name), dann `scripts/reset-demo-data.sh --project prodflow --env-file .env --dry-run`.
+- **`scripts/demo-run.sh`** führt den bindenden Demoablauf mit echten Logins und echten Tokens aus (Auftrag MR-200 × 10 → eine Bestellanforderung SC-M8 × 15 → Freigabe als Planer 403 →
+  Freigabe und Wareneingang als Einkäufer → Auftrag freigegeben → Abschluss; Endbestand MR-200 10, SC-M8 0, PL-ST3 10, PR-40 15, BR-L60 20). Der Lauf **verbraucht** den Ausgangszustand und
+  startet deshalb nur bei intaktem Ausgangszustand (sonst Exit 3: erst zurücksetzen). Gemeinsame Anmeldefunktionen: `scripts/lib/oidc.sh` (auch von `smoke-auth.sh` genutzt).
+- **Prüfung:** `scripts/test-reset-demo.sh` (38 Fälle mit Wegwerf-PostgreSQL: Ablehnungen, Keycloak-Attrappe, doppelte Container, fehlerhafter Seed → Rollback, Wiederholbarkeit mit
+  identischem Fingerabdruck von Daten, Versionen und Sequenzen) und `scripts/test-prod-stack.sh` (55 Fälle; enthält Demo-Lauf 1, abgelehnten Lauf 2, Reset, Demo-Lauf 2, Reset).
+
 ## Deployment-Einrichtung
 
 > **Hinweis:** Diese Anleitung ist der ursprüngliche Plan (ADR #11) und **überholt** durch die Abschnitte „Produktionsstapel" und

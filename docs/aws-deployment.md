@@ -54,6 +54,16 @@ Erwartet: alle Zeilen `PASS`. Zusätzlich manuell: Swagger UI `https://app-<name
 
 Negativ: `https://auth-<name>.duckdns.org/admin/` und `/realms/master` müssen 404 liefern; Port 8180 darf von außen nicht erreichbar sein.
 
+### Demo zurücksetzen und Ablauf prüfen (auf dem Server)
+```bash
+cd /opt/prodflow/repo
+echo 'PRODFLOW_DEMO_RESET=allowed' | sudo tee -a deploy/.env >/dev/null      # einmalig: Demo-Marker (nur auf dem Demo-Server)
+sudo scripts/reset-demo-data.sh --project prodflow-prod --env-file deploy/.env --dry-run     # Ziel und Plan ansehen
+sudo scripts/reset-demo-data.sh --project prodflow-prod --env-file deploy/.env --yes         # zurücksetzen
+sudo bash -c 'set -a; . deploy/.env; set +a; scripts/demo-run.sh --auth-url "$AUTH_URL" --app-url "$APP_URL"'   # Ablauf mit echten Tokens
+```
+Nach jedem Durchlauf wieder zurücksetzen. `demo-run.sh` verweigert den Start, wenn der Ausgangszustand nicht intakt ist.
+
 ## 4. Betrieb
 - **Keycloak-Admin:** `ssh -L 8180:127.0.0.1:8180 ubuntu@<ip>`, dann `http://localhost:8180` (Benutzer/Passwort aus `deploy/.env`: `KC_BOOTSTRAP_ADMIN_*`).
 - **Neue Version:** kommt von selbst: CI setzt den GHCR-Zeiger `prod`, der Agent (`prodflow-agent.timer`, jede Minute) rollt aus, prüft die Gesundheit und kehrt bei Fehlern automatisch zurück (`journalctl -u prodflow-agent`). Handweg: `sudo /opt/prodflow/repo/deploy/deploy.sh sha-<commit>`.
