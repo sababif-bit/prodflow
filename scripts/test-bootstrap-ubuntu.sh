@@ -124,8 +124,8 @@ check $([ "$(https "-o /dev/null -w %{http_code} https://$AUTH/admin/")" = 404 ]
 echo "   waiting for the Keycloak realm (single Keycloak start on 2 GiB)..."
 kc=1; for _ in $(seq 1 60); do [ "$(https "-o /dev/null -w %{http_code} https://$AUTH/realms/prodflow/.well-known/openid-configuration")" = 200 ] && { kc=0; break; }; sleep 5; done
 check $kc 'Keycloak realm prodflow is served over HTTPS'
-docker cp "$HERE/smoke-auth.sh" $C:/tmp/smoke-auth.sh >/dev/null 2>&1
-[ -d "$HERE/lib" ] && docker cp "$HERE/lib" $C:/tmp/lib >/dev/null 2>&1   # shared login library, present once the demo-reset PR is merged
+docker cp "$REPO/scripts/smoke-auth.sh" $C:/tmp/smoke-auth.sh >/dev/null 2>&1
+[ -d "$HERE/lib" ] && docker cp "$REPO/scripts/lib" $C:/tmp/lib >/dev/null 2>&1   # shared login library, present once the demo-reset PR is merged
 inc $C sh -c "set -a; . /opt/prodflow/repo/deploy/.env; set +a; echo '127.0.0.1 $APP $AUTH' >>/etc/hosts; CURL_CA_BUNDLE=/tmp/caddy-root.crt bash /tmp/smoke-auth.sh --auth-url https://$AUTH --app-url https://$APP" >"$WORK/smoke.log" 2>&1
 rc_smoke=$?; check $rc_smoke 'smoke-auth.sh passes against the bootstrapped stack (real logins, API, roles)' "$(grep -c '^FAIL' "$WORK/smoke.log") FAIL lines"
 [ "$rc_smoke" = 0 ] || { echo '   ---- smoke-auth output (no secrets by design):'; tail -15 "$WORK/smoke.log" | cut -c1-200; }
