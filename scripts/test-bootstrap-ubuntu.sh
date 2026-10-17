@@ -41,6 +41,12 @@ echo "systemctl $*" >>/var/log/systemctl-stub.log
 case "$*" in
   *"enable --now docker"*)
     if [ ! -S /var/run/docker.sock ]; then
+      # nested cgroup v2 (same preparation as the official docker:dind image): move all processes out of the root cgroup, delegate controllers
+      if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+        mkdir -p /sys/fs/cgroup/init
+        xargs -rn1 </sys/fs/cgroup/cgroup.procs >/sys/fs/cgroup/init/cgroup.procs 2>/dev/null || true
+        sed -e 's/ / +/g' -e 's/^/+/' </sys/fs/cgroup/cgroup.controllers >/sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || true
+      fi
       (nohup dockerd >/var/log/dockerd.log 2>&1 &)
       for _ in $(seq 1 90); do docker info >/dev/null 2>&1 && break; sleep 1; done
     fi ;;
