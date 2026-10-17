@@ -113,6 +113,9 @@ for s in caddy backend keycloak db keycloak-db; do check $(printf '%s' "$states"
 check $(printf '%s' "$states" | grep -q 'keycloak-import-guard-1=exited' && echo 0 || echo 1) 'import guard ran once and exited'
 check $([ "$(inc $C docker inspect --format '{{.State.ExitCode}}' prodflow-prod-keycloak-import-guard-1)" = 0 ] && echo 0 || echo 1) 'import guard exit code 0'
 inc $C sh -c 'docker cp prodflow-prod-caddy-1:/data/caddy/pki/authorities/local/root.crt /tmp/caddy-root.crt' >/dev/null 2>&1
+inc $C sh -c "echo '127.0.0.1 $APP $AUTH' >>/etc/hosts"   # the test names point at the box itself (Caddy publishes 443 there)
+check $([ -s "$WORK/none" ] && echo 1 || echo 0) 'test names resolve to the box (hosts entry)'
+check $(inc $C sh -c "test -s /tmp/caddy-root.crt" && echo 0 || echo 1) "Caddy's internal CA certificate was extracted for trust"
 jsonq() { inc $C sh -c "CURL_CA_BUNDLE=/tmp/caddy-root.crt curl -sS --max-time 20 $1 | jq -r $2" 2>/dev/null | tr -d '\015'; }   # jq exists in the box, not on the Windows host
 https() { inc $C sh -c "echo '127.0.0.1 $APP $AUTH' >>/etc/hosts 2>/dev/null; CURL_CA_BUNDLE=/tmp/caddy-root.crt curl -sS --max-time 20 $*"; }
 ver=$(jsonq "https://$APP/version" .revision)
