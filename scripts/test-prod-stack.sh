@@ -34,6 +34,7 @@ dc() { docker compose -p "$PROJECT" -f "$DEPLOY_NATIVE/docker-compose.prod.yml" 
 NET="${PROJECT}_default"
 
 cleanup() {
+  [ -n "${SAMPLER:-}" ] && kill "$SAMPLER" >/dev/null 2>&1
   dc down -v --remove-orphans >/dev/null 2>&1
   rm -rf "$WORK"
   unset PRODFLOW_DB_PASSWORD KEYCLOAK_DB_PASSWORD KC_BOOTSTRAP_ADMIN_PASSWORD DEMO_PLANNER_PASSWORD DEMO_PURCHASER_PASSWORD DEMO_ADMIN_PASSWORD
@@ -69,6 +70,9 @@ check $([ -z "$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT
 dc down >/dev/null 2>&1
 
 echo "== start the stack"
+# memory sampler: peak usage per container from the first start until the end of the test (input for the instance-type decision)
+( while :; do docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' $(docker ps -q --filter "label=com.docker.compose.project=$PROJECT") 2>/dev/null; sleep 1; done ) >"$WORK/mem.log" 2>&1 &
+SAMPLER=$!
 dc up -d >"$WORK/up.log" 2>&1; check $? 'compose up -d succeeds' "$(tail -3 "$WORK/up.log" | tr '\n' ' ')"
 client() { # run a command in the compose network inside a small alpine toolbox (curl, openssl, jq, bash)
   docker run --rm --network "$NET" -v "$HERE_NATIVE:/scripts:ro" -e DEMO_PLANNER_PASSWORD -e DEMO_PURCHASER_PASSWORD -e DEMO_ADMIN_PASSWORD \
@@ -125,8 +129,16 @@ check $ready 'realm served again after the restart'
 client "bash /scripts/smoke-auth.sh --auth-url $AUTH --app-url $APP --insecure-local --users planner --no-api" >"$WORK/smoke2.log" 2>&1
 check $? 'the original planner password still works after the restart'
 
-echo "== memory (informational, input for the instance-type decision)"
-docker stats --no-stream --format '  {{.Name}}: {{.MemUsage}}' $(docker ps -q --filter "label=com.docker.compose.project=$PROJECT") | sed 's/prodflow-prodcheck-//'
+echo "== memory: peak per container since the first start (the t3.small has 2 GiB for everything, Linux and Docker included)"
+kill "$SAMPLER" >/dev/null 2>&1; SAMPLER=''
+awk '{ v=$2; u=v; gsub(/[0-9.]/,"",u); n=v; gsub(/[A-Za-z]/,"",n); n=n+0; if(u=="GiB") n*=1024; else if(u=="KiB") n/=1024; else if(u=="B") n/=1048576;
+       name=$1; sub(/^prodflow-prodcheck-/,"",name); if(n>peak[name]) peak[name]=n }
+     END { for (k in peak) { printf("  %-22s peak %6.0f MiB%c", k, peak[k], 10); total+=peak[k] }
+           printf("  %-22s peak %6.0f MiB (sum of the individual peaks)%c", "ALL", total, 10) }' "$WORK/mem.log" | sort
+oom=0; for c in $(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT"); do [ "$(docker inspect --format '{{.State.OOMKilled}}' "$c")" = true ] && oom=1; done
+check $oom 'no container was killed for exceeding its memory limit'
+restarts=0; for c in $(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT"); do n=$(docker inspect --format '{{.RestartCount}}' "$c"); restarts=$((restarts + n)); done
+check $([ "$restarts" = 0 ] && echo 0 || echo 1) 'no container had to be restarted' "restarts=$restarts"
 
 echo "== secrets"
 logs=$(dc logs 2>&1); leaked=0

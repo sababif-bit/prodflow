@@ -68,6 +68,12 @@ DEMO_PURCHASER_PASSWORD=$(gen)
 DEMO_ADMIN_PASSWORD=$(gen)
 DUCKDNS_TOKEN=$DUCKDNS_TOKEN
 ENVEOF
+  # optional: Caddy TLS directive, e.g. a Let's Encrypt STAGING rehearsal (see docs/aws-deployment.md); never needed for the real run
+  case "${TLS_DIRECTIVE:-}" in
+    *"'"*) echo "TLS_DIRECTIVE must not contain a single quote" >&2; exit 2 ;;
+    '') ;;
+    *) printf "TLS_DIRECTIVE='%s'\n" "$TLS_DIRECTIVE" >>"$DEPLOY/.env" ;;
+  esac
   chmod 600 "$DEPLOY/.env"
   unset DUCKDNS_TOKEN
 fi
