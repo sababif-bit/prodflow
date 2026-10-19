@@ -1,7 +1,0 @@
-{
-  "keycloak": {
-    "url": "http://localhost:8180",
-    "realm": "prodflow",
-    "clientId": "prodflow-web"
-  }
-}
