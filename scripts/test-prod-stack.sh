@@ -90,6 +90,22 @@ echo "== real logins and API (scripts/smoke-auth.sh)"
 client "bash /scripts/smoke-auth.sh --auth-url $AUTH --app-url $APP --insecure-local" | tee "$WORK/smoke.log"
 check ${PIPESTATUS[0]} 'smoke-auth.sh passes for planner, purchaser and admin' "$(grep -c '^FAIL' "$WORK/smoke.log") FAIL lines"
 
+echo "== demo workflow with real tokens, guarded reset, repeatability (Issues #9/#19)"
+printf 'PRODFLOW_DEMO_RESET=allowed
+' >"$WORK/demo.env"
+client "bash /scripts/demo-run.sh --auth-url $AUTH --app-url $APP --insecure-local" | tee "$WORK/demo1.log" | grep -E '^(FAIL|REFUSED|demo-run)'
+check ${PIPESTATUS[0]} 'demo run 1 on the fresh baseline behaves exactly as specified' "$(grep -c '^FAIL' "$WORK/demo1.log") FAIL lines"
+client "bash /scripts/demo-run.sh --auth-url $AUTH --app-url $APP --insecure-local" >"$WORK/demo-refused.log" 2>&1; rc=$?
+check $([ $rc -eq 3 ] && echo 0 || echo 1) 'a second run on the consumed baseline is refused (exit 3)' "exit $rc"
+out=$(bash "$HERE/reset-demo-data.sh" --project "$PROJECT" --env-file "$WORK/demo.env" --yes 2>&1); rc=$?
+check $([ $rc -eq 0 ] && printf '%s' "$out" | grep -q 'SC-M8 25' && echo 0 || echo 1) 'reset-demo-data.sh restores the baseline on the running stack' "exit $rc"
+client "bash /scripts/demo-run.sh --auth-url $AUTH --app-url $APP --insecure-local" | tee "$WORK/demo2.log" | grep -E '^(FAIL|REFUSED)'
+check ${PIPESTATUS[0]} 'demo run 2 after the reset behaves identically (first order is FA-00001 again)' "$(grep -c '^FAIL' "$WORK/demo2.log") FAIL lines"
+out=$(bash "$HERE/reset-demo-data.sh" --project "$PROJECT" --env-file "$WORK/demo.env" --yes 2>&1); rc=$?
+check $([ $rc -eq 0 ] && echo 0 || echo 1) 'final reset leaves the stack in the demo baseline' "exit $rc"
+out=$(bash "$HERE/reset-demo-data.sh" --project "$PROJECT" --env-file "$WORK/demo.env" --service keycloak-db --yes 2>&1); rc=$?
+check $([ $rc -eq 2 ] && echo 0 || echo 1) 'the reset refuses the Keycloak database service on the live stack' "exit $rc"
+
 echo "== public surface"
 code() { client "curl -sk -o /dev/null -w '%{http_code}' $1" 2>/dev/null; }
 for p in /admin/ /admin/master/console/ /admin/realms/prodflow /realms/master/.well-known/openid-configuration /realms/master /metrics /health /health/ready / \

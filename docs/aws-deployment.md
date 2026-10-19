@@ -36,7 +36,7 @@ einen SSH-Tunnel erreichbar. Zwei DuckDNS-Namen (`app-…` und `auth-…`).
   bzw. 13 $ (medium) und liegt damit unter 15 $, wenn danach abgebaut wird (Issue #13). Instanz nicht unnötig 24/7 laufen lassen, falls die Sandbox das erlaubt.
 - **Vorab-Prüfungen:** `deploy/preflight.sh` prüft im Bootstrap, dass der Image-Tag in GHCR existiert und beide DuckDNS-Namen auf **diese** Instanz zeigen, bevor Caddy startet
   (sonst verbraucht Caddy Let's-Encrypt-Versuche). Überspringen nur mit `SKIP_DNS_CHECK=1`.
-- **Demo-Werkzeuge:** `scripts/reset-demo-data.sh` und `scripts/demo-run.sh` kommen mit PR #30; der Agent holt sie mit dem nächsten Release auf den Server.
+- **Demo-Werkzeuge:** `scripts/reset-demo-data.sh` und `scripts/demo-run.sh` (PR #30) liegen im Repository; auf dem Server stehen sie, sobald der Agent einen Stand ab diesem Merge ausgerollt hat.
 
 ## 2. Server einrichten (per SSH)
 ```bash
@@ -68,6 +68,16 @@ Erwartet: alle Zeilen `PASS`. Zusätzlich manuell: Swagger UI `https://app-<name
 `planner`, Auftrag anlegen, Materialprüfung; Freigabe als `planner` → 403, als `purchaser` → 200 (Demoablauf Schritte 1–5).
 
 Negativ: `https://auth-<name>.duckdns.org/admin/` und `/realms/master` müssen 404 liefern; Port 8180 darf von außen nicht erreichbar sein.
+
+### Demo zurücksetzen und Ablauf prüfen (auf dem Server)
+```bash
+cd /opt/prodflow/repo
+echo 'PRODFLOW_DEMO_RESET=allowed' | sudo tee -a deploy/.env >/dev/null      # einmalig: Demo-Marker (nur auf dem Demo-Server)
+sudo scripts/reset-demo-data.sh --project prodflow-prod --env-file deploy/.env --dry-run     # Ziel und Plan ansehen
+sudo scripts/reset-demo-data.sh --project prodflow-prod --env-file deploy/.env --yes         # zurücksetzen
+sudo bash -c 'set -a; . deploy/.env; set +a; scripts/demo-run.sh --auth-url "$AUTH_URL" --app-url "$APP_URL"'   # Ablauf mit echten Tokens
+```
+Nach jedem Durchlauf wieder zurücksetzen. `demo-run.sh` verweigert den Start, wenn der Ausgangszustand nicht intakt ist.
 
 ## 4. Betrieb
 - **Keycloak-Admin:** `ssh -L 8180:127.0.0.1:8180 ubuntu@<ip>`, dann `http://localhost:8180` (Benutzer/Passwort aus `deploy/.env`: `KC_BOOTSTRAP_ADMIN_*`).

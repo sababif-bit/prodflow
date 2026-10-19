@@ -50,19 +50,11 @@ WORK=$(mktemp -d) || exit 2
 chmod 700 "$WORK"
 trap 'rm -rf "$WORK"' EXIT
 PASS=0; FAIL=0
+# shellcheck source=lib/oidc.sh
+. "$(dirname "$0")/lib/oidc.sh" || exit 2
 ok()   { PASS=$((PASS + 1)); echo "PASS  $1"; }
 bad()  { FAIL=$((FAIL + 1)); echo "FAIL  $1${2:+  ($2)}"; }
 check() { if [ "$1" = 0 ]; then ok "$2"; else bad "$2" "${3:-}"; fi; }
-c() { curl -sS --max-time 25 $CURL_TLS "$@"; }
-
-b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
-jwt_payload() { # $1 = JWT -> decoded payload JSON
-  local p=${1#*.}; p=${p%%.*}; p=$(printf '%s' "$p" | tr '_-' '/+')
-  case $(( ${#p} % 4 )) in 2) p="$p==" ;; 3) p="$p=" ;; esac
-  printf '%s' "$p" | base64 -d 2>/dev/null
-}
-html_decode() { sed -e 's/&amp;/\&/g' -e 's/&#61;/=/g' -e 's/&quot;/"/g'; }
-urlenc() { jq -rn --arg v "$1" '$v|@uri'; }
 password_of() { local v="DEMO_$(printf '%s' "$1" | tr 'a-z' 'A-Z')_PASSWORD"; printf '%s' "${!v-}"; }
 
 OIDC="$AUTH_URL/realms/$REALM/protocol/openid-connect"
@@ -70,33 +62,6 @@ REDIRECT="$APP_URL/swagger-ui/oauth2-redirect.html"
 [ "$CLIENT" = prodflow-web ] && REDIRECT='http://localhost:4200/callback'
 ORIGIN=$(printf '%s' "$APP_URL" | sed -E 's#^(https?://[^/]+).*#\1#')
 
-# login <user> <password> -> sets LOGIN_RESULT (code|rejected|error:...), LOGIN_CODE, VERIFIER
-login() {
-  local user=$1 pw=$2 jar="$WORK/jar.$$.$RANDOM" state nonce challenge page action
-  LOGIN_CODE=''; LOGIN_RESULT=''
-  VERIFIER=$(openssl rand 48 | b64url)
-  challenge=$(printf '%s' "$VERIFIER" | openssl dgst -sha256 -binary | b64url)
-  state=$(openssl rand -hex 8); nonce=$(openssl rand -hex 8)
-  page=$(c -c "$jar" -b "$jar" -G "$OIDC/auth" \
-        --data-urlencode "client_id=$CLIENT" --data-urlencode "redirect_uri=$REDIRECT" --data-urlencode 'response_type=code' \
-        --data-urlencode 'scope=openid' --data-urlencode "state=$state" --data-urlencode "nonce=$nonce" \
-        --data-urlencode "code_challenge=$challenge" --data-urlencode 'code_challenge_method=S256' -w '\n%{http_code}') || { LOGIN_RESULT='error: authorization request failed'; return; }
-  local status=${page##*$'\n'}; page=${page%$'\n'*}
-  [ "$status" = 200 ] || { LOGIN_RESULT="error: authorization endpoint answered HTTP $status"; return; }
-  action=$(printf '%s' "$page" | tr '\n' ' ' | sed -n 's/.*id="kc-form-login"[^>]*action="\([^"]*\)".*/\1/p' | html_decode)
-  [ -n "$action" ] || { LOGIN_RESULT='error: no login form on the page'; return; }
-  local headers="$WORK/h.$$.$RANDOM"
-  c -c "$jar" -b "$jar" -D "$headers" -o "$WORK/body.$$" -X POST "$action" \
-    --data-urlencode "username=$user" --data-urlencode "password=$pw" --data-urlencode 'credentialId=' >/dev/null || { LOGIN_RESULT='error: login post failed'; return; }
-  local loc; loc=$(tr -d '\r' <"$headers" | sed -n 's/^[Ll]ocation: //p' | head -1)
-  case "$loc" in
-    "$REDIRECT"*) LOGIN_CODE=$(printf '%s' "$loc" | sed -n 's/.*[?&]code=\([^&]*\).*/\1/p')
-                  [ "$(printf '%s' "$loc" | sed -n 's/.*[?&]state=\([^&]*\).*/\1/p')" = "$state" ] || { LOGIN_RESULT='error: state mismatch'; return; }
-                  [ -n "$LOGIN_CODE" ] && LOGIN_RESULT=code || LOGIN_RESULT='error: no code in redirect' ;;
-    '') if grep -qi 'invalid username or password' "$WORK/body.$$" 2>/dev/null; then LOGIN_RESULT=rejected; else LOGIN_RESULT='error: unexpected login answer'; fi ;;
-    *) LOGIN_RESULT="error: redirected to an unexpected target" ;;
-  esac
-}
 
 echo "== smoke-auth.sh: $AUTH_URL (client $CLIENT, realm $REALM)"
 c -o /dev/null -w '%{http_code}' "$AUTH_URL/realms/$REALM/.well-known/openid-configuration" >"$WORK/wk.code"

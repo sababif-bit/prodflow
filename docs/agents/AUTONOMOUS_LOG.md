@@ -43,6 +43,25 @@ Secrets are never recorded here. Limits: no push/merge/GitHub writes/AWS resourc
   bootstrap admin variables stay visible in `docker inspect`; the `..;` path variant is untested against Keycloak (check with `curl --path-as-is` after go-live);
   `mem_limit` values sum to about 2 GB (swap is added by the bootstrap).
 
+## Milestone 5 – pull requests (2026-10-17)
+- Pushed 5 branches, opened PRs: #25 (#7, base main), #26 (#8, base main), #27 (#14/#16, base feature/8), #28 (#10, base feature/14), #29 (#18, base feature/10). No merges, no settings changes.
+- Ancestry fixes before pushing: `feature/10-version-endpoint` had accidentally carried the #18 agent commit (reset locally, unpushed); stack rebased so each PR shows one logical commit.
+- The workflow triggered only for PRs with base `main`, so stacked PRs would have had no CI: one commit in #26 changes `pull_request` to every base.
+- CI on all five: test job green (about 40-52 s); verified in the log of #28: 100 tests, 0 failures, on `ubuntu-24.04`. `build`/`deploy`/`verify` are skipped on PRs by design.
+- Merge-readiness review: all MERGEABLE/CLEAN. Findings: (1) squash/rebase merges would break the stack -> "Create a merge commit"; (2) "delete branch on merge" is off -> delete each branch after merging
+  so GitHub retargets the next PR; (3) `main` unprotected, no Actions variables, default Actions token read-only (the build job declares `packages: write` itself);
+  (4) the `prod` tag and Verify job exist only after #29 merges, so the first AWS bootstrap must use an image built from `main` after that merge. Full list: `docs/agents/GATE_CHECKLIST.md`.
+
+## Milestone 6 – #9 demo reset + #19 workflow check (branch `feature/9-demo-reset`, commit `ff98f88`, local only)
+- `scripts/reset-demo-data.sh`: single transaction, V100 seed as single source of truth, baseline verified inside the transaction; guards: demo marker, service `db` only, database `prodflow` only,
+  one container, schema fingerprint (no Keycloak tables, Flyway 1+100); `--dry-run`, `--yes`.
+- `scripts/demo-run.sh` + `scripts/lib/oidc.sh`: the demo workflow with real PKCE tokens (14 checks: shortage 15, one purchase request, planner 403, purchaser approve/receive, auto-release, completion, final stock);
+  refuses a consumed baseline (exit 3).
+- Tests: `test-reset-demo.sh` 38/38 (disposable PostgreSQL; includes a Keycloak-like database, ambiguous containers, bad seed -> rollback, identical fingerprints after repeated run+reset);
+  `test-prod-stack.sh` 55/55 (demo run, refused second run, reset, identical second run, refusal of `keycloak-db` on the live test stack; smoke-auth 38/38 after the library refactor).
+- Bug caught by the positive control: the Flyway check used a glob that could not match `,1,100,` (shared comma); every refusal test had passed anyway. Lesson: always keep a "happy path" test next to refusal tests.
+- NOT run against the real development database (explicitly forbidden); to use it locally add `PRODFLOW_DEMO_RESET=allowed` to the local `.env` first.
+
 ## Milestone 7 – first-deployment readiness (branch `feature/17-first-deployment-readiness`, local only, 2026-10-17)
 Audit of bootstrap, preflight, deploy, agent, Compose, Caddy, Keycloak and CI for the first real AWS run (instance stopped, never contacted; compromised DuckDNS token never used).
 - **Clean-Ubuntu dry run** (`scripts/test-bootstrap-ubuntu.sh`): real `bootstrap-server.sh` on Ubuntu 24.04 in a disposable box limited like the t3.small (2 GiB RAM + 2 GiB swap, own Docker daemon);
@@ -62,9 +81,9 @@ Audit of bootstrap, preflight, deploy, agent, Compose, Caddy, Keycloak and CI fo
 - **Not verified (needs the real environment):** Let's Encrypt issuance for the real names, DuckDNS with a new token, the real EC2 instance and its timing, the Verify job with `PROD_APP_URL` set, the `if: vars...` condition on GitHub (actionlint accepts it).
 
 ## Current blockers (permission boundaries)
-1. **Push/PR/merge** of the local branches (#7, #8, #14, #10, #18) and the repository variable `PROD_APP_URL`: GitHub writes need approval.
+1. **Merging** PRs #25-#29, push/PR for `feature/9-demo-reset`, branch protection and the repository variable `PROD_APP_URL`: need approval.
 2. **AWS** (#17): EC2, security group, Elastic IP, DuckDNS account/token and the Syntax sandbox rules (D-6) need the project owner; runbook ready in `docs/aws-deployment.md`.
 3. Recreating the dev `keycloak` container (guard activation) needs approval.
 
 ## Exact next step
-Finish run 9 of `test-prod-stack.sh` after the review fixes and commit; then ask ONE approval question: push the branches and open PRs (order #7, #8, #14+#16, #10, #18) so that CI runs.
+Merge sequence #25 -> #29 (approval needed), then branch protection, `PROD_APP_URL`, and the AWS steps in `docs/agents/GATE_CHECKLIST.md`.
