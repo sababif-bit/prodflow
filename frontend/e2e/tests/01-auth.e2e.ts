@@ -1,11 +1,10 @@
 import { expect, test } from '@playwright/test';
-import { DISPOSABLE_KEYCLOAK, signIn, useDisposableConfig } from '../support';
+import { DISPOSABLE_KEYCLOAK, signIn } from '../support';
 
 test.describe('Anmeldung (Authorization Code + PKCE gegen echtes Keycloak)', () => {
   test('ohne Anmeldung wird zum Keycloak-Login weitergeleitet (PKCE S256, Code-Flow)', async ({
     page,
   }) => {
-    await useDisposableConfig(page);
     await page.goto('/');
     await expect(page.locator('#username')).toBeVisible({ timeout: 30_000 });
     const url = new URL(page.url());
@@ -67,15 +66,27 @@ test.describe('Anmeldung (Authorization Code + PKCE gegen echtes Keycloak)', () 
     expect(versionCall?.hasAuth).toBe(false);
   });
 
-  test('Abmelden beendet die Sitzung: danach verlangt die Anwendung wieder eine Anmeldung', async ({
+  test('Abmelden: Keycloak beendet die Sitzung und führt zurück zur Anwendung, die erneut anmelden lässt', async ({
     page,
   }) => {
     await signIn(page, 'planner');
     await page.getByRole('button', { name: 'Abmelden' }).click();
-    // Keycloak ends the session; whichever page it shows, a new visit must ask for credentials again
-    await page.waitForLoadState('networkidle');
-    await useDisposableConfig(page);
-    await page.goto('/');
+    // Keycloak must accept the post-logout redirect (post.logout.redirect.uris of the client) and send the browser back to the
+    // application; because sign-in is required, the application then shows the Keycloak login form again.
     await expect(page.locator('#username')).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('body')).not.toContainText(/invalid|ungültig/i);
+    const redirect = new URL(page.url()).searchParams.get('redirect_uri');
+    expect(redirect?.startsWith('http://localhost:4200/')).toBe(true);
+  });
+
+  test('Laufzeitkonfiguration: /config.json kommt vom Backend (aus dem Issuer), nicht aus den Build-Dateien', async ({
+    request,
+  }) => {
+    const response = await request.get('/config.json');
+    expect(response.ok()).toBe(true);
+    expect(response.headers()['cache-control']).toContain('no-store');
+    expect(await response.json()).toEqual({
+      keycloak: { url: DISPOSABLE_KEYCLOAK, realm: 'prodflow', clientId: 'prodflow-web' },
+    });
   });
 });

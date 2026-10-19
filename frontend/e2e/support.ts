@@ -23,25 +23,14 @@ const PASSWORD_VARIABLE: Record<TestRole, string> = {
 
 export const DISPOSABLE_KEYCLOAK = 'http://localhost:18180';
 
-/** Points the application at the disposable Keycloak instead of the default in public/config.json. */
-export async function useDisposableConfig(page: Page): Promise<void> {
-  await page.route('**/config.json', (route) =>
-    route.fulfill({
-      json: { keycloak: { url: DISPOSABLE_KEYCLOAK, realm: 'prodflow', clientId: 'prodflow-web' } },
-    }),
-  );
-}
-
 /** Real sign-in through the Keycloak login form (Authorization Code + PKCE), then waits for the application shell. */
 export async function signIn(page: Page, role: TestRole): Promise<void> {
-  await useDisposableConfig(page);
   await page.goto('/');
   await page.locator('#username').fill(role);
   await page.locator('#password').fill(stackEnv()[PASSWORD_VARIABLE[role]]);
   await page.locator('#kc-login').click();
-  await expect(page.getByRole('navigation', { name: 'Hauptnavigation' })).toBeVisible({
-    timeout: 30_000,
-  });
+  // the application shell is up (the navigation itself is a closed drawer, invisible, on a phone)
+  await expect(page.getByRole('main')).toBeVisible({ timeout: 30_000 });
 }
 
 export async function openNav(page: Page, label: string): Promise<void> {
