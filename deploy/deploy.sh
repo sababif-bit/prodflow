@@ -5,8 +5,11 @@
 # - The tag must be a commit tag "sha-<commit>" (or any tag matching [A-Za-z0-9._-]+ when DEPLOY_SKIP_GIT=1). The repository on the
 #   server is moved to that commit so Compose file, Caddyfile and realm import match the image that is started.
 # - .env (mode 600, never in Git) keeps the secrets; only the IMAGE_TAG line is rewritten.
-# - Health gate: the backend container must become healthy within DEPLOY_TIMEOUT seconds (default 240), otherwise the previous
+# - Health gate: the backend container must become healthy within DEPLOY_TIMEOUT seconds (default 240) AND serve the SPA, its
+#   runtime configuration and a 401 for unauthenticated API calls (verify_app), otherwise the previous
 #   tag (and commit) is started again and the script exits 1.
+# - Rollback to a release that has no SPA (e.g. back to the backend-only sha-fb08e68): DEPLOY_ROLLBACK_TO_BACKEND_ONLY=1 skips ONLY the
+#   SPA-shell and /config.json checks (a warning is printed); the health gate and the API 401 check stay in force.
 set -euo pipefail
 # The whole script lives in main() and is called on the last line: bash has parsed the complete file before anything runs, so the
 # repository checkout below (which replaces this very file) cannot corrupt the running script.
@@ -36,17 +39,36 @@ main() {
     return 1
   }
 
+  # Healthy is not enough: the release must really serve the application (HTML shell, runtime configuration) and must refuse an
+  # unauthenticated API call. The checks run INSIDE the backend container, so they depend on neither DNS, certificates nor Caddy.
+  # A failure triggers the same rollback as an unhealthy release. (Reverse-proxy headers are checked from outside: scripts/verify-deployment.sh.)
+  verify_app() {
+    local base=http://localhost:8080 page cfg api
+    if [ "${DEPLOY_ROLLBACK_TO_BACKEND_ONLY:-0}" = 1 ]; then
+      # Deliberate rollback to a release WITHOUT the SPA (e.g. sha-fb08e68): its "/" and "/config.json" answer 401 by design. Only these two
+      # checks are skipped; healthy (wait_healthy) and the 401 for unauthenticated API calls below still apply. Never set it for a forward release.
+      echo "deploy: WARNING DEPLOY_ROLLBACK_TO_BACKEND_ONLY=1 - the SPA shell and /config.json checks are skipped; health and the API 401 check still apply" >&2
+    else
+      page=$(dc exec -T backend wget -qO- "$base/" 2>/dev/null) && [[ $page == *"<app-root"* ]] || { echo "deploy: GET / does not return the application" >&2; return 1; }
+      cfg=$(dc exec -T backend wget -qO- "$base/config.json" 2>/dev/null) && [[ $cfg == *'"realm":"prodflow"'* && $cfg == *'"url":"https://'* ]] || { echo "deploy: /config.json is missing or does not point at an https sign-in server" >&2; return 1; }
+    fi
+    # busybox wget prints the status line as the server sent it: "HTTP/1.1 401 Unauthorized", "HTTP/1.1 401 " or "HTTP/1.1 401" (no reason phrase)
+    api=$(dc exec -T backend wget -S -qO- "$base/api/items" 2>&1 || true)
+    local re='HTTP/[0-9.]+[[:space:]]+401([^0-9]|$)'
+    [[ $api =~ $re ]] || { echo "deploy: GET /api/items without a token did not answer 401" >&2; return 1; }
+  }
+
   # Inside an `if` condition set -e does not abort: a failing pull/up (e.g. Compose gives up because the backend never becomes
   # healthy) must lead to the rollback below, not end the script with the bad release still configured.
   release() { dc pull --quiet backend && dc up -d --remove-orphans; }
 
   PREV=$(current_tag)
   echo "deploy: ${PREV:-<none>} -> $TAG"
-  if checkout_for "$TAG" && set_tag "$TAG" && release && wait_healthy; then
-    echo "deploy: $TAG is healthy"
+  if checkout_for "$TAG" && set_tag "$TAG" && release && wait_healthy && verify_app; then
+    echo "deploy: $TAG is healthy and serves the application"
     exit 0
   fi
-  echo "deploy: $TAG could not be started or did NOT become healthy within ${TIMEOUT}s - rolling back to ${PREV:-<none>}" >&2
+  echo "deploy: $TAG could not be started or did NOT become healthy and serve the application within ${TIMEOUT}s - rolling back to ${PREV:-<none>}" >&2
   if [ -n "$PREV" ] && [ "$PREV" != "$TAG" ]; then
     checkout_for "$PREV" || true
     set_tag "$PREV"

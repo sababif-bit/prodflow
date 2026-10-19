@@ -1,9 +1,24 @@
+# Build context: the REPOSITORY ROOT (docker build -f backend/Dockerfile .), because the image contains the Angular single-page
+# application (frontend/) next to the Spring Boot backend: one image, one tag, atomic deployment and rollback (docs/frontend-architecture.md).
+
+# ---- Frontend stage: compile the Angular SPA (tests and lint run in CI, not here) ----
+FROM node:22.18.0-alpine AS frontend
+ENV NG_CLI_ANALYTICS=false
+WORKDIR /fe
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY frontend/ ./
+RUN npx ng build --configuration production
+
 # ---- Build stage: compile and package with Maven (tests run in CI, not here) ----
 FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /build
-COPY pom.xml .
+COPY backend/pom.xml .
 RUN mvn -B -q dependency:go-offline
-COPY src ./src
+COPY backend/src ./src
+# the compiled SPA becomes part of the jar (classpath:/static); runtime configuration is NOT in it, the backend answers /config.json
+COPY --from=frontend /fe/dist/prodflow-frontend/browser ./src/main/resources/static
+RUN test -f src/main/resources/static/index.html && ! test -e src/main/resources/static/config.json
 RUN mvn -B -q package -DskipTests
 
 # ---- Runtime stage: only the JRE and the jar -> small image, smaller attack surface ----

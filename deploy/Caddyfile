@@ -28,12 +28,22 @@
 	request_header -X-Forwarded-Port
 }
 
-# ---- application: Swagger UI + API (Spring Security decides who may do what) ----
+# ---- application: the Angular SPA (served by the backend, same origin), Swagger UI and the API (Spring Security decides who may do what) ----
+# Content-Security-Policy of the SPA: nothing but its own files; the only external connection is the sign-in server (token endpoint).
+# style-src needs 'unsafe-inline' because PrimeNG injects its theme as <style> elements at run time; scripts stay strictly 'self' (the
+# Angular build is configured without inline scripts). frame-ancestors/object-src/base-uri/form-action close the usual injection and
+# clickjacking paths. Swagger UI is a documented demo exception and gets a more permissive script policy.
 {$APP_HOST} {
 	{$TLS_DIRECTIVE}
 	import security_headers
 	import strip_forwarded
 	encode zstd gzip
+
+	@swagger path /swagger-ui /swagger-ui/* /swagger-ui.html /v3/api-docs /v3/api-docs/*
+	@spa not path /swagger-ui /swagger-ui/* /swagger-ui.html /v3/api-docs /v3/api-docs/*
+	header @spa Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://{$AUTH_HOST}; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"
+	header @swagger Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' https://{$AUTH_HOST}; frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
+	header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
 
 	# only the health endpoint of the actuator is public; /actuator/info stays ADMIN-only inside the backend and is not routed
 	handle /actuator/health* {
@@ -42,6 +52,18 @@
 	handle /actuator* {
 		respond "Not found" 404
 	}
+
+	# Angular bundles and fonts carry a content hash in their file name (main-ABCD1234.js): the file name changes with every build, so
+	# browsers may keep them for a year. Everything else (index.html, config.json, API) keeps the backend's no-cache/no-store.
+	@hashed path_regexp hashed ^/(?:[A-Za-z0-9-]+-[A-Z0-9]{8}.(?:js|css)|media/[A-Za-z0-9._-]+-[A-Z0-9]{8}.woff2?)$
+	handle @hashed {
+		reverse_proxy backend:8080 {
+			header_down Cache-Control "public, max-age=31536000, immutable"
+			header_down -Expires
+			header_down -Pragma
+		}
+	}
+
 	handle {
 		reverse_proxy backend:8080
 	}

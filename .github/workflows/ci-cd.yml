@@ -37,10 +37,46 @@ jobs:
           name: test-reports
           path: backend/target/surefire-reports
 
+  # 1b) FRONTEND - the Angular application (frontend/): lint, unit tests, production build. Runs on every push and pull request.
+  #      The browser tests (Playwright, frontend/e2e) need the disposable Docker stack and are run locally before a release
+  #      (docs/frontend-architecture.md); scripts/test-prod-stack.sh runs a browser test through Caddy as well.
+  frontend:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - name: Unit tests
+        run: npm test -- --no-watch
+      - name: Production build
+        run: npm run build
+
+  # 1c) OPS - tests of the deployment scripts and of the Caddyfile (CSP, cache headers, hostnames). No server and no secrets needed.
+  ops:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Deployment agent and health/application gate (fake docker)
+        run: bash scripts/test-deploy-agent.sh
+      - name: Caddyfile (real Caddy image, offline)
+        run: bash scripts/test-caddyfile.sh
+
   # 2) BUILD - only on main, only if tests are green. Publishes sha-<commit>, latest and the pointer "prod" that the server agent
   #    pulls (pull-based deployment, Issue #18: no inbound SSH). The commit is baked into the image (GET /version, OCI label).
   build:
-    needs: test
+    needs: [test, frontend, ops]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:
@@ -67,7 +103,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v6
         with:
-          context: backend
+          # repository root: the image contains the Angular application (frontend/) and the backend (backend/)
+          context: .
+          file: backend/Dockerfile
           push: true
           build-args: |
             GIT_SHA=${{ github.sha }}
@@ -96,6 +134,9 @@ jobs:
     env:
       PROD_APP_URL: ${{ vars.PROD_APP_URL }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Check that the deployed revision matches this commit
         run: |
           # defensive: the job-level condition already skips this job without PROD_APP_URL; never pass silently if it is empty
@@ -117,3 +158,6 @@ jobs:
           done
           echo "::error::Release ${GITHUB_SHA::7} did not become live at ${PROD_APP_URL} within 15 minutes (the agent rolls back unhealthy releases)"
           exit 1
+      # the same release must also serve the application: HTML, runtime configuration (sign-in server), 401 without a token, CSP/cache headers
+      - name: Verify the deployed application (shell, configuration, API authorization, headers)
+        run: bash scripts/verify-deployment.sh --app-url "$PROD_APP_URL" --expect-revision "$GITHUB_SHA"

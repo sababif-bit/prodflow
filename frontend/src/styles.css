@@ -1,0 +1,87 @@
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-sans/700.css';
+@import 'primeicons/primeicons.css';
+@import 'tailwindcss';
+@plugin 'tailwindcss-primeui';
+
+@theme {
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --color-ink: var(--p-surface-900);
+  --color-muted: var(--p-surface-500);
+}
+
+/* ---- application tokens (domain colors; PrimeNG supplies the neutral surfaces and the primary palette) ---- */
+:root {
+  --pf-bg: var(--p-surface-50);
+  --pf-card: var(--p-surface-0);
+  --pf-border: var(--p-surface-200);
+  --pf-sidebar-w: 16.5rem;
+  --pf-topbar-h: 3.75rem;
+  /* signal colors for production states: never the only carrier of meaning (every chip also has a text and an icon) */
+  --pf-warn: #b45309;
+  --pf-warn-bg: #fef3c7;
+  --pf-ok: #166534;
+  --pf-ok-bg: #dcfce7;
+  --pf-danger: #b91c1c;
+  --pf-danger-bg: #fee2e2;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--pf-bg);
+  color: var(--p-surface-800);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  color: var(--p-surface-900);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* numeric columns line up */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* focus ring for keyboard users on plain elements (PrimeNG components bring their own) */
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--p-primary-color);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* cards used across the application */
+.pf-card {
+  background: var(--pf-card);
+  border: 1px solid var(--pf-border);
+  border-radius: 10px;
+}
+
+/* a keyboard "skip to content" link for accessibility */
+.pf-skip {
+  position: absolute;
+  left: -999px;
+  top: 0;
+  z-index: 100;
+  background: var(--p-primary-color);
+  color: #fff;
+  padding: 0.5rem 1rem;
+}
+.pf-skip:focus {
+  left: 0.5rem;
+  top: 0.5rem;
+}

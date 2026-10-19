@@ -60,11 +60,16 @@ class KeycloakRealmConfigTest {
     }
 
     @Test
-    void webClientStaysUnchangedForAngular() {
+    void webClientAllowsOnlyTheDevServerAndTheDeployedApplication() {
         JsonNode web = client(WEB_CLIENT);
         assertPublicPkceWithoutPasswordGrant(web);
-        assertThat(texts(web.path("redirectUris"))).containsExactly("http://localhost:4200/*");
-        assertThat(texts(web.path("webOrigins"))).containsExactly("http://localhost:4200");
+        // ng serve (development) and the application URL of the environment (the SPA is served by the backend); no wildcard hosts
+        assertThat(texts(web.path("redirectUris"))).containsExactly("http://localhost:4200/*", APP_URL + "/*");
+        assertThat(texts(web.path("webOrigins"))).containsExactly("http://localhost:4200", APP_URL);
+        // the logout redirect is explicit and limited to the same two places (Keycloak separates the values with "##")
+        assertThat(web.path("attributes").path("post.logout.redirect.uris").asText())
+                .isEqualTo("http://localhost:4200/*##" + APP_URL + "/*");
+        assertThat(web.path("implicitFlowEnabled").asBoolean()).isFalse();
         assertThat(web.path("attributes").has("access.token.lifespan")).isFalse();
     }
 

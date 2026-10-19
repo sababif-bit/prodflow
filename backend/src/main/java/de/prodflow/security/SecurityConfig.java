@@ -1,5 +1,6 @@
 package de.prodflow.security;
 
+import de.prodflow.web.FrontendRoutes;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -45,6 +46,12 @@ public class SecurityConfig {
                         // API docs: switched off in production via springdoc properties (separate step)
                         .requestMatchers(GET, "/v3/api-docs", "/v3/api-docs/**",
                                 "/swagger-ui.html", "/swagger-ui/**").permitAll()
+                        // the Angular SPA (compiled into the image): its files and client-side routes are public GETs, nothing else.
+                        // They carry no data; every API call still needs a token. Unlisted paths stay denied (see anyRequest below).
+                        .requestMatchers(GET, FrontendRoutes.STATIC_FILES).permitAll()
+                        .requestMatchers(GET, FrontendRoutes.SPA_ROUTES).permitAll()
+                        .requestMatchers(HEAD, FrontendRoutes.STATIC_FILES).permitAll()
+                        .requestMatchers(HEAD, FrontendRoutes.SPA_ROUTES).permitAll()
                         // Spring's error page, so permitted requests that fail get their real status
                         .requestMatchers("/error").permitAll()
 
