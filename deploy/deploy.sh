@@ -8,6 +8,8 @@
 # - Health gate: the backend container must become healthy within DEPLOY_TIMEOUT seconds (default 240) AND serve the SPA, its
 #   runtime configuration and a 401 for unauthenticated API calls (verify_app), otherwise the previous
 #   tag (and commit) is started again and the script exits 1.
+# - Rollback to a release that has no SPA (e.g. back to the backend-only sha-fb08e68): DEPLOY_ROLLBACK_TO_BACKEND_ONLY=1 skips ONLY the
+#   SPA-shell and /config.json checks (a warning is printed); the health gate and the API 401 check stay in force.
 set -euo pipefail
 # The whole script lives in main() and is called on the last line: bash has parsed the complete file before anything runs, so the
 # repository checkout below (which replaces this very file) cannot corrupt the running script.
@@ -42,10 +44,18 @@ main() {
   # A failure triggers the same rollback as an unhealthy release. (Reverse-proxy headers are checked from outside: scripts/verify-deployment.sh.)
   verify_app() {
     local base=http://localhost:8080 page cfg api
-    page=$(dc exec -T backend wget -qO- "$base/" 2>/dev/null) && [[ $page == *"<app-root"* ]] || { echo "deploy: GET / does not return the application" >&2; return 1; }
-    cfg=$(dc exec -T backend wget -qO- "$base/config.json" 2>/dev/null) && [[ $cfg == *'"realm":"prodflow"'* && $cfg == *'"url":"https://'* ]] || { echo "deploy: /config.json is missing or does not point at an https sign-in server" >&2; return 1; }
+    if [ "${DEPLOY_ROLLBACK_TO_BACKEND_ONLY:-0}" = 1 ]; then
+      # Deliberate rollback to a release WITHOUT the SPA (e.g. sha-fb08e68): its "/" and "/config.json" answer 401 by design. Only these two
+      # checks are skipped; healthy (wait_healthy) and the 401 for unauthenticated API calls below still apply. Never set it for a forward release.
+      echo "deploy: WARNING DEPLOY_ROLLBACK_TO_BACKEND_ONLY=1 - the SPA shell and /config.json checks are skipped; health and the API 401 check still apply" >&2
+    else
+      page=$(dc exec -T backend wget -qO- "$base/" 2>/dev/null) && [[ $page == *"<app-root"* ]] || { echo "deploy: GET / does not return the application" >&2; return 1; }
+      cfg=$(dc exec -T backend wget -qO- "$base/config.json" 2>/dev/null) && [[ $cfg == *'"realm":"prodflow"'* && $cfg == *'"url":"https://'* ]] || { echo "deploy: /config.json is missing or does not point at an https sign-in server" >&2; return 1; }
+    fi
+    # busybox wget prints the status line as the server sent it: "HTTP/1.1 401 Unauthorized", "HTTP/1.1 401 " or "HTTP/1.1 401" (no reason phrase)
     api=$(dc exec -T backend wget -S -qO- "$base/api/items" 2>&1 || true)
-    [[ $api == *" 401 "* ]] || { echo "deploy: GET /api/items without a token did not answer 401" >&2; return 1; }
+    local re='HTTP/[0-9.]+[[:space:]]+401([^0-9]|$)'
+    [[ $api =~ $re ]] || { echo "deploy: GET /api/items without a token did not answer 401" >&2; return 1; }
   }
 
   # Inside an `if` condition set -e does not abort: a failing pull/up (e.g. Compose gives up because the backend never becomes
