@@ -25,6 +25,7 @@ services:
       APP_HOST: ${APP_HOST:?public hostname of the application}
       AUTH_HOST: ${AUTH_HOST:?public hostname of Keycloak}
       TLS_DIRECTIVE: ${TLS_DIRECTIVE:-}
+      ACME_CA: ${ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}
     ports:
       - "${PUBLISH_BIND:-0.0.0.0}:${HTTP_PUBLISH:-80}:80"
       - "${PUBLISH_BIND:-0.0.0.0}:${HTTPS_PUBLISH:-443}:443"
@@ -53,6 +54,14 @@ services:
       OIDC_AUDIENCE: prodflow-api
       SERVER_FORWARD_HEADERS_STRATEGY: framework
     mem_limit: 512m
+    # overrides the image's own HEALTHCHECK: Caddy waits for this one, and a cold Spring Boot start on a 2-vCPU burstable instance
+    # (Flyway, JIT, Keycloak starting at the same time) can take longer than the image default allows (about 130 s)
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q '\"status\":\"UP\"' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 150s
+      retries: 6
     depends_on:
       db:
         condition: service_healthy
@@ -76,7 +85,9 @@ services:
       # admin console only through the SSH tunnel (127.0.0.1:8180 on the server); Caddy does not route it
       KC_HOSTNAME_ADMIN: http://localhost:8180
       KC_HEALTH_ENABLED: "true"
-      JAVA_OPTS_KC_HEAP: -Xms128m -Xmx512m
+      # one node, one realm: smaller heap and no cluster cache (the sum of all mem_limit values stays below the 2 GiB of a t3.small)
+      JAVA_OPTS_KC_HEAP: -Xms64m -Xmx384m
+      KC_CACHE: local
       # placeholders of keycloak/prodflow-realm.json (first import only; validated by keycloak-import-guard)
       PRODFLOW_APP_URL: ${APP_URL:?public application URL, e.g. https://app.example.org}
       DEMO_PLANNER_PASSWORD: ${DEMO_PLANNER_PASSWORD:?}
@@ -86,7 +97,7 @@ services:
       - "127.0.0.1:8180:8080"
     volumes:
       - ../keycloak/prodflow-realm.json:/opt/keycloak/data/import/prodflow-realm.json:ro
-    mem_limit: 900m
+    mem_limit: 768m
     healthcheck:
       test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"status\": \"UP\"' <&3"]
       interval: 15s
@@ -129,7 +140,8 @@ services:
       POSTGRES_PASSWORD: ${PRODFLOW_DB_PASSWORD:?}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    mem_limit: 256m
+    command: ["postgres", "-c", "shared_buffers=32MB", "-c", "max_connections=30"]
+    mem_limit: 192m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U prodflow -d prodflow"]
       interval: 5s
@@ -146,7 +158,8 @@ services:
       POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?}
     volumes:
       - keycloak_pgdata:/var/lib/postgresql/data
-    mem_limit: 256m
+    command: ["postgres", "-c", "shared_buffers=32MB", "-c", "max_connections=30"]
+    mem_limit: 192m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${KEYCLOAK_DB_USER} -d ${KEYCLOAK_DB_NAME}"]
       interval: 5s

@@ -75,14 +75,22 @@ jobs:
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
             ${{ steps.meta.outputs.image }}:latest
             ${{ steps.meta.outputs.image }}:prod
+      - name: Summary (what a green build means)
+        run: |
+          {
+            echo "### Image published: ${{ steps.meta.outputs.tag }} (also moved the pointer \`prod\`)"
+            echo "A green build means **the image exists**, not that it is deployed. The server agent pulls it within about a minute;"
+            echo "the **Verify** job proves it from outside (needs the repository variable \`PROD_APP_URL\`; a grey/skipped Verify = nobody checked)."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # 3) VERIFY - the server agent (deploy/agent.sh, systemd timer) pulls the new "prod" image, deploys it with a health gate and
   #    rolls back on failure. This job proves the result from the outside: the public /version must report THIS commit and the
   #    application must be healthy. It fails (and the pipeline is red) if the release does not arrive within the timeout.
-  #    Configure the repository VARIABLE PROD_APP_URL (e.g. https://app-xyz.duckdns.org, not a secret). Until it is set the job
-  #    reports "not configured" instead of silently passing.
+  #    Configure the repository VARIABLE PROD_APP_URL (e.g. https://app-xyz.duckdns.org, not a secret). While it is not set the job is
+  #    SKIPPED (grey), never green: a skipped Verify means "nobody checked a live deployment", not "deployment is fine".
   verify:
     needs: build
+    if: ${{ vars.PROD_APP_URL != '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -90,11 +98,8 @@ jobs:
     steps:
       - name: Check that the deployed revision matches this commit
         run: |
-          if [ -z "$PROD_APP_URL" ]; then
-            echo "::warning::Verify not executed: repository variable PROD_APP_URL is not set (no deployment target configured yet)."
-            echo "### Verify NOT executed - PROD_APP_URL is not configured" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
+          # defensive: the job-level condition already skips this job without PROD_APP_URL; never pass silently if it is empty
+          [ -n "$PROD_APP_URL" ] || { echo "::error::PROD_APP_URL is empty"; exit 1; }
           case "$PROD_APP_URL" in https://*) ;; *) echo "::error::PROD_APP_URL must be an https URL"; exit 1 ;; esac
           deadline=$((SECONDS + 900))
           while [ $SECONDS -lt $deadline ]; do

@@ -62,6 +62,24 @@ Secrets are never recorded here. Limits: no push/merge/GitHub writes/AWS resourc
 - Bug caught by the positive control: the Flyway check used a glob that could not match `,1,100,` (shared comma); every refusal test had passed anyway. Lesson: always keep a "happy path" test next to refusal tests.
 - NOT run against the real development database (explicitly forbidden); to use it locally add `PRODFLOW_DEMO_RESET=allowed` to the local `.env` first.
 
+## Milestone 7 – first-deployment readiness (branch `feature/17-first-deployment-readiness`, local only, 2026-10-17)
+Audit of bootstrap, preflight, deploy, agent, Compose, Caddy, Keycloak and CI for the first real AWS run (instance stopped, never contacted; compromised DuckDNS token never used).
+- **Clean-Ubuntu dry run** (`scripts/test-bootstrap-ubuntu.sh`): real `bootstrap-server.sh` on Ubuntu 24.04 in a disposable box limited like the t3.small (2 GiB RAM + 2 GiB swap, own Docker daemon);
+  real Docker/Compose installation, real GHCR image, real stack; stubs only for systemd, swap, the DuckDNS API (fake token) and Let's Encrypt (`tls internal`). **48/48**, also with half the CPU (`BOOT_CPUS=1`, 177 s). Bootstrap duration 113 s.
+- **Real defects found and fixed:** (1) the documented Let's Encrypt staging recipe (`tls { ca ... }` on one line) is invalid Caddyfile syntax and would have crashed Caddy -> replaced by `ACME_CA` (tested offline, `scripts/test-caddyfile.sh` 9/9);
+  (2) apt on a freshly started instance can hit the dpkg lock held by unattended-upgrades -> `DPkg::Lock::Timeout=300`; (3) the backend image healthcheck (about 130 s) is tight for a cold Spring Boot start on a 2-vCPU burstable instance
+  -> Compose override (start period 150 s, 6 retries); (4) `agent.sh` ran `cd` without a failure guard; (5) a skipped Verify job was green with only a warning -> now `if: vars.PROD_APP_URL != ''` (skipped = grey) and the build summary says that a green build means "image published", not "deployed";
+  (6) stats sampler listed all containers when the project had none yet (harness only).
+- **Memory (t3.small):** peak of all containers together about 0.95 GiB over start, 38 login checks, API calls and a Keycloak restart (Keycloak about 560 MiB, backend about 300 MiB, databases about 75 MiB, Caddy about 15 MiB); the whole 2 GiB box peaked at 1.6 GiB including dockerd and cached image layers,
+  no OOM kill, no restart. Limits are now consistent with a 2 GiB host (sum 1.76 GiB: Keycloak heap 384m / limit 768m, `KC_CACHE=local`, PostgreSQL 32 MB buffers / 192m). SerialGC for the backend was measured and rejected (no gain).
+  Ubuntu itself needs roughly 0.2-0.3 GiB more on the real instance: t3.small is plausible, the 2 GiB swap file is the safety net, switch to t3.medium if swap is used or OOM appears.
+- **Secrets audit:** the whole Git history (all refs) contains no UUID-like tokens, DuckDNS token assignments, AWS/GitHub keys or private keys; the token is read from a hidden prompt, travels to curl via stdin, is written only to `deploy/.env` (600) and was proven absent from bootstrap output,
+  stub log, all container environments and the resolved Compose config (with a fake token). The bootstrap now warns when the token arrives via the environment (shell history).
+- **Static analysis:** ShellCheck (production scripts clean at warning level), hadolint (info only), actionlint clean, `systemd-analyze verify` clean for the agent units.
+- **Deliverables:** `docs/first-deployment-runbook.md` (DE; PowerShell + Ubuntu commands, staging rehearsal, troubleshooting), `docs/presentation/deployment-architektur-de.md` (DE, short explanation), updated `docs/aws-deployment.md`.
+- **Final test results on the committed state:** test-bootstrap-ubuntu 48/48, test-prod-stack 51/51, test-preflight 14/14, test-deploy-agent 23/23, test-caddyfile 9/9, `mvn -q verify` 100/100.
+- **Not verified (needs the real environment):** Let's Encrypt issuance for the real names, DuckDNS with a new token, the real EC2 instance and its timing, the Verify job with `PROD_APP_URL` set, the `if: vars...` condition on GitHub (actionlint accepts it).
+
 ## Current blockers (permission boundaries)
 1. **Merging** PRs #25-#29, push/PR for `feature/9-demo-reset`, branch protection and the repository variable `PROD_APP_URL`: need approval.
 2. **AWS** (#17): EC2, security group, Elastic IP, DuckDNS account/token and the Syntax sandbox rules (D-6) need the project owner; runbook ready in `docs/aws-deployment.md`.
