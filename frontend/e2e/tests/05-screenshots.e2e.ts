@@ -1,6 +1,6 @@
 import { expect, Page, test } from '@playwright/test';
 import { join } from 'node:path';
-import { openNav, signIn } from '../support';
+import { chooseProduct, openNav, signIn } from '../support';
 
 /**
  * Seeds a few more real orders and captures the screens for the documentation (docs/frontend/screenshots).
@@ -19,8 +19,7 @@ test.describe('Screenshots', () => {
     await openNav(page, 'Fertigungsaufträge');
     await page.getByRole('button', { name: 'Neuer Auftrag' }).click();
     const dialog = page.getByRole('dialog', { name: 'Neuen Fertigungsauftrag anlegen' });
-    await dialog.locator('p-select').click();
-    await page.getByRole('option', { name: /MR-200/ }).click();
+    await chooseProduct(page, 'MR-200');
     await dialog.locator('#order-qty').fill('4');
     await shot(page, '05-auftrag-anlegen');
     await dialog.getByRole('button', { name: 'Anlegen und Material prüfen' }).click();
@@ -79,6 +78,7 @@ test.describe('Screenshots', () => {
     await page.waitForLoadState('networkidle');
     await shot(page, '11-mobil-uebersicht');
     await page.getByRole('button', { name: 'Menü öffnen' }).click();
+    await expect(page.locator('aside')).toHaveCSS('translate', 'none'); // the drawer has finished sliding in
     await shot(page, '12-mobil-menue');
     await page
       .getByRole('navigation', { name: 'Hauptnavigation' })

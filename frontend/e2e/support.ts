@@ -39,3 +39,12 @@ export async function openNav(page: Page, label: string): Promise<void> {
     .getByRole('link', { name: label })
     .click();
 }
+
+/** Chooses the product in the "new production order" dialog and waits until the selection really shows (the overlay animates). */
+export async function chooseProduct(page: Page, code: string): Promise<void> {
+  const dialog = page.getByRole('dialog', { name: 'Neuen Fertigungsauftrag anlegen' });
+  const select = dialog.locator('p-select');
+  await select.click();
+  await page.getByRole('option', { name: new RegExp(code) }).click();
+  await expect(select).toContainText(code);
+}

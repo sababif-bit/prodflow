@@ -33,7 +33,10 @@ Final project, Syntax Institut module "Fullstack, Backend & DevOps". Docs are in
 - Keycloak realm `prodflow` imported from `keycloak/prodflow-realm.json`; public client
   `prodflow-web` (PKCE S256) prepared for a future frontend.
 - `docker-compose.yml` (local): `db`, `keycloak-db`, `keycloak`, `backend`.
-- No frontend yet.
+- Frontend: Angular 21 + PrimeNG 21 in `frontend/` (German UI, Keycloak PKCE, dashboard, inventory + single-level BOM view, orders, purchase requests).
+  Implemented and tested LOCALLY on branch `feature/frontend-foundation` (not pushed, not deployed). The SPA is compiled into the backend image
+  (`backend/Dockerfile`, build context = repository root) and served by Spring Boot; runtime config from `GET /config.json`. See `docs/frontend-architecture.md`,
+  ADR #16–#19, `docs/frontend-rollout.md`.
 
 ## Proposed AWS deployment architecture (NOT implemented, not final)
 - Single EC2 instance running Docker Compose: PostgreSQL, Keycloak, backend, and
@@ -45,7 +48,7 @@ Final project, Syntax Institut module "Fullstack, Backend & DevOps". Docs are in
 ## Tech stack
 Java 21, Spring Boot 3.4, Spring Security OAuth2 Resource Server, PostgreSQL 16, Flyway,
 JUnit 5 + Testcontainers, springdoc, Docker (multi-stage) + Compose, Keycloak,
-GitHub Actions, GHCR. Planned: Angular + PrimeNG frontend, AWS EC2, Caddy.
+GitHub Actions, GHCR. Frontend: Angular 21, PrimeNG 21 (MIT), ESLint, Playwright. Deployment: AWS EC2, Caddy.
 
 ## Local development (run only with approval)
 - Prereq: Docker Desktop; `.env` created from `.env.example`.
@@ -74,7 +77,7 @@ Not done / planned:
 - AWS EC2 deployment: NOT completed (deploy job skips its steps without `EC2_HOST`).
 - Branch protection on `main`: unverified.
 - Production Keycloak/OIDC config, HTTPS (Caddy), Swagger off in production.
-- Frontend (#7–#10), docs/diagram and demo prep (#12–#13).
+- Frontend rollout to AWS (needs approvals: Keycloak `prodflow-web` URIs via `scripts/provision-web-client.ps1`, push/PR/merge); docs/diagram and demo prep (#12–#13).
 - Stretch: multi-level BOM, make-or-buy, reservations, Excel import.
 
 ## Known limitations

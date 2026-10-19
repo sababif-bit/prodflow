@@ -19,6 +19,10 @@ Kurz und begründet – jede Entscheidung muss in der Präsentation erklärbar s
 | 13 | **Fehlerformat RFC 7807** (`ProblemDetail`) über `@RestControllerAdvice` | Ein einheitliches Fehlerformat für das Frontend. | — |
 | 14 | **Keycloak + OAuth2/JWT**: Backend ist reiner OAuth2 Resource Server, Rollen ADMIN, PLANNER, PURCHASER als Keycloak-Realm-Rollen *(umgesetzt, PR #2 und #4)* | Login, Passwörter und Tokens übernimmt ein Standardprodukt; das Backend prüft nur Signatur, Ablauf, Issuer und Audience. Rollen setzen die Funktionstrennung Planung/Einkauf durch. | Eigene Benutzerverwaltung, Basic Auth, Session-Login im Backend |
 | 15 | **Geplantes AWS-Deployment: eine EC2-Instanz mit Docker Compose** (PostgreSQL, Keycloak, Backend, Caddy für HTTPS) *(Vorschlag, noch nicht umgesetzt)* | Gleiches Compose-Modell wie lokal, ein Server, wenig Kosten; Caddy holt TLS-Zertifikate automatisch. | RDS und Nginx *(nicht entschieden, kein Bestandteil des aktuellen Vorschlags)* |
+| 16 | **Frontend: Angular 21 + PrimeNG 21 (MIT, exakt gepinnt)**, eigenständig unter `frontend/` *(lokal umgesetzt und getestet, Details `docs/frontend-architecture.md`)* | Standalone-Komponenten, Signals und zoneless; PrimeNG 20/21 sind MIT-lizenziert, 22.x steht unter der PrimeUI-Lizenz (Schlüssel, Erneuerung, Hinweispflicht). Das Frontend bleibt unabhängig wartbar (eigene Abhängigkeiten, Tests, Lint). | PrimeNG 22 (Lizenz), React/Vue (Kenntnisse, Vorgabe des Moduls) |
+| 17 | **Die kompilierte SPA liegt im Backend-Image** (Spring Boot liefert sie same-origin aus; ein Image, ein Tag) *(lokal umgesetzt)* | Atomares Deployment und Rollback über den bestehenden Pull-Agenten, kein CORS, kein zweites Artefakt, kein Versionsversatz zwischen Oberfläche und API. Der Build-Kontext ist das Repository-Wurzelverzeichnis (`backend/Dockerfile`, Stufe `frontend` → `build` → Laufzeit). | Caddy liefert die Dateien (zweites Image/Volume, Agent und CI müssten zwei Artefakte kennen), eigener Webserver-Container |
+| 18 | **Laufzeitkonfiguration über `GET /config.json`, vom Backend aus dem Issuer abgeleitet; Tokens nur im Speicher; Authorization Code + PKCE (S256)** *(lokal umgesetzt)* | Die kompilierten Dateien enthalten keinen umgebungsspezifischen Wert (kein `localhost` in Produktion), und das Frontend kann nie auf einen anderen Identity Provider zeigen als der, dem das Backend vertraut. Der öffentliche Client `prodflow-web` braucht kein Geheimnis. | Konfiguration im Build (pro Umgebung ein Build), Tokens in `localStorage` (XSS), Implicit Flow |
+| 19 | **Content-Security-Policy und Cache-Header im Caddy**; schmaler öffentlicher GET-Zugriff nur für die Dateien und Routen der SPA (Deny-by-default bleibt) *(lokal getestet)* | Die SPA darf nur eigene Dateien laden und nur den Anmeldeserver kontaktieren; gehashte Bundles werden ein Jahr gecacht, `index.html` und `config.json` nie. `style-src` braucht `'unsafe-inline'` (PrimeNG setzt Styles zur Laufzeit), Skripte bleiben strikt `'self'`. Swagger UI erhält als Demo-Ausnahme eine eigene Policy. | CSP nur im Backend (Spring), Nonce-basierte Styles (PrimeNG-Anpassung nötig) |
 
 ## Bewusste Grenzen des MVP
 
@@ -222,6 +226,7 @@ Internet ──443──► Caddy (HTTPS, Let's-Encrypt-Zertifikate)
 - **Pfad-Allowlist für Keycloak (Caddy):** öffentlich nur `/realms/prodflow/*`, `/resources/*`, `/robots.txt`. Admin-Konsole,
   Admin-REST-API, Master-Realm, `/metrics`, `/health` und Umgehungsversuche (`..`, `%2e%2e`, `..%2f`) liefern 404. Die Verwaltung läuft
   über einen SSH-Tunnel auf `127.0.0.1:8180` des Servers (`KC_HOSTNAME_ADMIN=http://localhost:8180`).
+- **Anwendung (SPA, ADR #16–#19):** `APP_HOST` liefert auch die Angular-Oberfläche (aus dem Backend-Image). Caddy setzt dort die CSP (`script-src 'self'`, `connect-src` nur `'self'` und der Anmeldeserver, `frame-ancestors 'none'`), `Permissions-Policy` und für gehashte Bundles `Cache-Control: public, max-age=31536000, immutable`; `index.html` und `config.json` bleiben nicht cachebar (Spring Security). Der Angular-Build erzeugt dafür keine Inline-Skripte (`optimization.styles.inlineCritical: false`). Da die Caddyfile eine einzelne Bind-Mount-Datei ist und `git checkout` sie ersetzt, trägt der Caddy-Dienst `RELEASE_TAG=${IMAGE_TAG}`: Jede Version erzeugt den Container neu und lädt so die Caddyfile des Releases.
 - **Backend-Pfade:** `/actuator/health` öffentlich; alle anderen `/actuator/*`-Pfade (auch `/actuator/info`) routet Caddy nicht.
   Swagger UI und `/v3/api-docs` sind als dokumentierte Demo-Ausnahme öffentlich (Entscheidung D-8); die API selbst verlangt Tokens.
 - **Pflichtvariablen:** alle Geheimnisse und Adressen mit `${VAR:?}`: Fehlt eine, startet nichts. Der Import-Guard läuft hier mit den
@@ -230,12 +235,12 @@ Internet ──443──► Caddy (HTTPS, Let's-Encrypt-Zertifikate)
 - **Deployment-Einheit:** `deploy/deploy.sh sha-<commit>` stellt das Repository auf den Commit, setzt `IMAGE_TAG`, startet den Stapel
   und wartet auf `healthy`; sonst Rückkehr zum vorherigen Tag. Dasselbe Skript nutzt später der Pull-Agent (Issue #18).
 - **Speicher (gemessen, lokaler Lauf nach Login-, API- und Neustarttests):** Keycloak ≈ 490 MB, Backend ≈ 305 MB, Datenbanken ≈ 85 MB,
-  Caddy ≈ 16 MB, zusammen ≈ 0,9 GB. Eine `t3.small` (2 GB) reicht für den Demolauf voraussichtlich; endgültig nach Messung auf der
+  Caddy ≈ 16 MB, zusammen ≈ 0,9 GB (Lauf mit SPA-Image: Keycloak 508 MB, Backend 314 MB, Datenbanken 77 MB, Caddy 53 MB, Summe der Einzelspitzen 952 MB). Eine `t3.small` (2 GB) reicht für den Demolauf voraussichtlich; endgültig nach Messung auf der
   Instanz (`docs/aws-deployment.md`).
 - **Automatische Prüfung:** `scripts/test-prod-stack.sh` startet den Stapel als eigenes Compose-Projekt (Port 18443/18181, zufällige Geheimnisse,
   interne CA, Hostnamen `app.prodflow.test`/`auth.prodflow.test` im Docker-Netz) und prüft Pflichtvariablen, Import-Guard, HTTPS, echte
   Logins mit PKCE, Token-Refresh, API 401/200/403, die Pfad-Allowlist, veröffentlichte Ports, Neustart und Geheimnisse in Logs
-  (`scripts/smoke-auth.sh`, Bash, auch für die Verify-Stufe auf Linux).
+  (`scripts/smoke-auth.sh`, Bash, auch für die Verify-Stufe auf Linux), außerdem `scripts/verify-deployment.sh` (Oberfläche, Laufzeitkonfiguration, API ohne Token, Header) und einen Browsertest durch Caddy (Playwright: Anmeldung, alle Seiten, Neuladen einer Unterseite, Abmelden, Swagger, keine CSP-Verstöße).
 - **Offen/Risiken:** Zertifikate (Let's Encrypt) und DuckDNS sind erst auf AWS prüfbar; Swagger öffentlich; die Demo-Passwörter stehen
   in `docker inspect` (wie das Admin-Passwort); der alte SSH-Deploy-Job im Workflow nutzt die neue Compose-Datei nicht und wird in #18 ersetzt.
 
@@ -243,17 +248,17 @@ Internet ──443──► Caddy (HTTPS, Let's-Encrypt-Zertifikate)
 
 Umgesetzt in `.github/workflows/ci-cd.yml`, `deploy/agent.sh`, `deploy/deploy.sh`; lokal getestet, **noch nicht auf AWS**.
 
-1. **Test** (jeder Push/PR): `mvn verify` mit Testcontainers.
-2. **Build** (nur `main`, nur bei grünem Test): Image mit dem Commit (`--build-arg GIT_SHA`, Label `org.opencontainers.image.revision`,
+1. **Test** (jeder Push/PR): `mvn verify` mit Testcontainers; **Frontend** (`npm ci`, ESLint, Unit-Tests, Produktions-Build); **Ops** (`scripts/test-deploy-agent.sh`, `scripts/test-caddyfile.sh`).
+2. **Build** (nur `main`, nur wenn Test, Frontend und Ops grün sind; Kontext = Repository-Wurzel, `backend/Dockerfile` baut Angular und Backend in ein Image): Image mit dem Commit (`--build-arg GIT_SHA`, Label `org.opencontainers.image.revision`,
    `GET /version`) nach GHCR als `sha-<commit>`, `latest` und dem Zeiger **`prod`**. `concurrency` bricht ältere Läufe ab, damit nur der
    neueste `main`-Stand ausgerollt wird.
 3. **Deploy (pull-basiert, ohne eingehendes SSH):** Ein systemd-Timer auf dem Server startet jede Minute `deploy/agent.sh`. Der Agent
    zieht `prod`, liest die Revision aus dem Label und ruft bei einer Abweichung `deploy/deploy.sh sha-<commit>` auf: Repository auf den
    Commit stellen, `IMAGE_TAG` setzen, Stapel starten, auf `healthy` warten (Standard 240 s), sonst **automatische Rückkehr** zum
-   vorherigen Tag. Ein fehlgeschlagener Tag wird gemerkt und nicht erneut versucht, bis ein neueres Image erscheint. Beide Skripte
+   vorherigen Tag. Gesund allein genügt nicht: `deploy.sh` prüft im Backend-Container (`verify_app`), dass `GET /` die Oberfläche liefert, `/config.json` auf einen https-Anmeldeserver zeigt und `/api/items` ohne Token 401 liefert – sonst ebenfalls Rückkehr. (Die erste Auslieferung dieser Prüfung läuft noch mit dem alten `deploy.sh` des Servers; danach gilt sie.) Ein fehlgeschlagener Tag wird gemerkt und nicht erneut versucht, bis ein neueres Image erscheint. Beide Skripte
    laufen vollständig in `main()`, weil der Checkout sie während der Ausführung ersetzt.
 4. **Verify** (`verify`-Job): fragt die öffentliche Adresse (Repository-Variable `PROD_APP_URL`, kein Geheimnis) bis zu 15 Minuten nach
-   `/version`, bis die Revision **dieser** Commit ist, und prüft `/actuator/health`. Sonst ist die Pipeline rot. Ist die Variable nicht
+   `/version`, bis die Revision **dieser** Commit ist, und prüft `/actuator/health`. Danach ruft der Job `scripts/verify-deployment.sh` auf (Oberfläche, Deep Links, `/config.json`, API ohne Token 401, Actuator, CSP/Cache/HSTS-Header). Sonst ist die Pipeline rot. Ist die Variable nicht
    gesetzt, meldet der Job „nicht ausgeführt" (Warnung), er besteht nicht stillschweigend.
 - **Sicherheit:** Der Server nimmt keine eingehenden Verwaltungsverbindungen für Deployments an (kein SSH-Deploy); der Agent zieht nur aus dem eigenen GHCR-Paket. Vertrauensanker ist
   das Repository (`main`) und die CI; der Agent läuft als root (Docker) auf einer wegwerfbaren Demo-Instanz.

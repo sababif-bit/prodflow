@@ -1,5 +1,5 @@
 import { expect, Page, test } from '@playwright/test';
-import { openNav, signIn } from '../support';
+import { chooseProduct, openNav, signIn } from '../support';
 
 /**
  * The demo workflow end to end through the UI, with two roles, against the disposable stack:
@@ -20,8 +20,7 @@ test.describe('Geschäftsablauf: Auftrag -> Fehlmenge -> Bestellung -> Freigabe 
     await openNav(page, 'Fertigungsaufträge');
     await page.getByRole('button', { name: 'Neuer Auftrag' }).click();
     const dialog = page.getByRole('dialog', { name: 'Neuen Fertigungsauftrag anlegen' });
-    await dialog.locator('p-select').click();
-    await page.getByRole('option', { name: /MR-200/ }).click();
+    await chooseProduct(page, 'MR-200');
     await dialog.locator('#order-qty').fill('10');
     await dialog.getByRole('button', { name: 'Anlegen und Material prüfen' }).click();
 
