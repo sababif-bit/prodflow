@@ -2,7 +2,7 @@
 # Disposable end-to-end test of the PRODUCTION stack (deploy/docker-compose.prod.yml, Issues #14/#16) on this machine.
 #
 # Starts the stack as its own Compose project (prodflow-prodcheck: own containers/volumes/network, published ports only on
-# 127.0.0.1:18443/18080/18181), with random secrets that exist only in this process' environment. Verifies:
+# 127.0.0.1:18443/18088/18181), with random secrets that exist only in this process' environment. Verifies:
 #   - missing required variables stop Compose (${VAR:?}); a bad demo password makes the import guard refuse Keycloak's start
 #   - HTTPS through Caddy (internal CA, hostnames app.prodflow.test / auth.prodflow.test), issuer = public URL
 #   - real Authorization Code + PKCE logins, refresh, API 401/200/403 with real tokens (scripts/smoke-auth.sh, run in the network)
@@ -18,7 +18,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
 DEPLOY="$REPO/deploy"
 PROJECT=prodflow-prodcheck
-HTTPS_PORT=18443; HTTP_PORT=18080; ADMIN_PORT=18181
+HTTPS_PORT=18443; HTTP_PORT=18088; ADMIN_PORT=18181   # 18080/18180 belong to the frontend e2e stack (frontend/e2e/stack.sh), 8080/8180 to the dev stack
 APP=https://app.prodflow.test; AUTH=https://auth.prodflow.test
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS + 1)); echo "PASS  $1"; }
@@ -46,13 +46,14 @@ trap cleanup EXIT
 command -v docker >/dev/null && command -v openssl >/dev/null || { echo "pre-check failed: docker/openssl missing"; exit 3; }
 docker version >/dev/null 2>&1 || { echo "pre-check failed: Docker not available"; exit 3; }
 [ -z "$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")" ] || { echo "pre-check failed: project $PROJECT already exists"; exit 3; }
-docker image inspect prodflow-backend:latest >/dev/null 2>&1 || { echo "pre-check failed: local image prodflow-backend:latest missing (docker compose build backend)"; exit 3; }
+IMAGE_TAG_UNDER_TEST=${TEST_IMAGE_TAG:-latest}   # e.g. TEST_IMAGE_TAG=prodcheck after: docker build -f backend/Dockerfile --build-arg GIT_SHA=<40 hex> -t prodflow-backend:prodcheck .
+docker image inspect prodflow-backend:$IMAGE_TAG_UNDER_TEST >/dev/null 2>&1 || { echo "pre-check failed: local image prodflow-backend:$IMAGE_TAG_UNDER_TEST missing (docker compose build backend, or see TEST_IMAGE_TAG)"; exit 3; }
 STACK_BEFORE=$(docker ps -a --filter 'label=com.docker.compose.project=prodflow' --format '{{.ID}}' | sort | tr '\n' ' ')
 
 # ---- environment (names only are exported; values are random and never printed) ----
 export APP_HOST=app.prodflow.test AUTH_HOST=auth.prodflow.test APP_URL=$APP AUTH_URL=$AUTH
 export TLS_DIRECTIVE='tls internal' PUBLISH_BIND=127.0.0.1 HTTP_PUBLISH=$HTTP_PORT HTTPS_PUBLISH=$HTTPS_PORT TEST_ADMIN_PUBLISH=$ADMIN_PORT
-export BACKEND_IMAGE=prodflow-backend IMAGE_TAG=latest
+export BACKEND_IMAGE=prodflow-backend IMAGE_TAG=$IMAGE_TAG_UNDER_TEST
 export KEYCLOAK_DB_NAME=keycloak KEYCLOAK_DB_USER=keycloak KC_BOOTSTRAP_ADMIN_USERNAME=prodcheck
 export PRODFLOW_DB_PASSWORD=$(secret) KEYCLOAK_DB_PASSWORD=$(secret) KC_BOOTSTRAP_ADMIN_PASSWORD=$(secret)
 export DEMO_PLANNER_PASSWORD=$(secret) DEMO_PURCHASER_PASSWORD=$(secret) DEMO_ADMIN_PASSWORD=$(secret)
@@ -89,6 +90,22 @@ if [ $ready -ne 0 ]; then dc ps -a; dc logs --tail 15 keycloak keycloak-import-g
 echo "== real logins and API (scripts/smoke-auth.sh)"
 client "bash /scripts/smoke-auth.sh --auth-url $AUTH --app-url $APP --insecure-local" | tee "$WORK/smoke.log"
 check ${PIPESTATUS[0]} 'smoke-auth.sh passes for planner, purchaser and admin' "$(grep -c '^FAIL' "$WORK/smoke.log") FAIL lines"
+
+echo "== frontend: application shell, runtime configuration, API authorization, proxy headers (scripts/verify-deployment.sh)"
+REVISION=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' prodflow-backend:$IMAGE_TAG_UNDER_TEST 2>/dev/null)
+client "bash /scripts/verify-deployment.sh --app-url $APP --insecure-local --expect-auth-url $AUTH $( [[ $REVISION =~ ^[0-9a-f]{40}$ ]] && echo "--expect-revision $REVISION" )" | tee "$WORK/verify.log" | grep -E '^(FAIL|verify-deployment)'
+check ${PIPESTATUS[0]} 'verify-deployment.sh passes against the production-like stack' "$(grep -c '^FAIL' "$WORK/verify.log") FAIL lines"
+
+echo "== browser: sign-in, all pages, deep-link reload, CSP, sign-out, Swagger through Caddy (Playwright, Chromium)"
+if [ -d "$REPO/frontend/node_modules/@playwright" ]; then
+  ( cd "$REPO/frontend" && PRODSTACK_PLANNER_PASSWORD=$DEMO_PLANNER_PASSWORD PRODSTACK_HTTPS_PORT=$HTTPS_PORT npx playwright test -c playwright.prodstack.config.ts ) >"$WORK/pw.log" 2>&1
+  rc=$?; ESC=$(printf '\033')
+  sed -E "s/${ESC}\[[0-9;]*m//g" "$WORK/pw.log" | grep -E '^ +(ok|✘|[0-9]+ (passed|failed))|Error|Expected|Received' | head -30
+  ran=$(sed -E "s/${ESC}\[[0-9;]*m//g" "$WORK/pw.log" | grep -cE '^ +ok [0-9]+')   # a skipped run exits 0 as well: the tests must really have run
+  check $([ $rc -eq 0 ] && [ "$ran" -ge 4 ] && echo 0 || echo 1) 'browser tests pass (no CSP violation, styles applied, deep link reload, sign-out redirect)' "exit $rc, $ran tests passed"
+else
+  echo "SKIP  browser tests: run npm ci in frontend/ first (Playwright missing)"
+fi
 
 echo "== demo workflow with real tokens, guarded reset, repeatability (Issues #9/#19)"
 printf 'PRODFLOW_DEMO_RESET=allowed

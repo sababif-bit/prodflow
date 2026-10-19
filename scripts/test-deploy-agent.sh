@@ -20,7 +20,7 @@ setup() { # fresh fake server tree
   rm -rf "$T/srv" "$T/bin" "$T/state"; mkdir -p "$T/srv/repo/deploy" "$T/bin" "$T/state"
   cp "$DEPLOY/agent.sh" "$DEPLOY/deploy.sh" "$T/srv/repo/deploy/"
   printf 'BACKEND_IMAGE=ghcr.io/example/prodflow\nIMAGE_TAG=sha-aaaaaaa\nSECRET_PLACEHOLDER=keep-me\n' >"$T/srv/repo/deploy/.env"
-  : >"$T/calls.log"; echo 0 >"$T/pull_status"; echo "$SHA_NEW" >"$T/rev"; echo healthy >"$T/health"; rm -f "$T/git_corrupt" "$T/up_fail_once" "$T/compose_pull_fail"
+  : >"$T/calls.log"; echo 0 >"$T/pull_status"; echo "$SHA_NEW" >"$T/rev"; echo healthy >"$T/health"; rm -f "$T/git_corrupt" "$T/up_fail_once" "$T/compose_pull_fail" "$T/app_broken"
   cat >"$T/bin/docker" <<'EOF'
 #!/usr/bin/env bash
 T=$(dirname "$(dirname "$0")")
@@ -30,6 +30,13 @@ case "$1" in
   compose) shift; echo "docker compose $*" >>"$T/calls.log"
     case "$*" in
       *"ps -q backend"*) echo fakecontainer ;;
+      *"exec -T backend wget"*)   # the application checks of deploy.sh (verify_app); $T/app_broken simulates a release that is healthy but serves no SPA
+        [ -e "$T/app_broken" ] && exit 1
+        case "$*" in
+          *config.json*) echo '{"keycloak":{"realm":"prodflow","url":"https://auth.example.org","clientId":"prodflow-web"}}' ;;
+          */api/items*) echo "  HTTP/1.1 401 Unauthorized" >&2; exit 1 ;;
+          *) echo '<html><app-root></app-root></html>' ;;
+        esac ;;
       *"up -d"*) if [ -e "$T/up_fail_once" ]; then rm -f "$T/up_fail_once"; exit 1; fi ;;   # Compose exits 1 when a dependency never gets healthy
       *"pull"*) [ -e "$T/compose_pull_fail" ] && exit 1 ;;
     esac ;;
@@ -78,6 +85,13 @@ n=$(ups); rc=$(run_agent)
 check $([ "$rc" = 0 ] && [ "$(ups)" = "$n" ] && grep -q 'failed earlier' "$T/out.log" && echo 0 || echo 1) 'the same failed release is not retried' "exit $rc"
 echo "$SHA_NEWER" >"$T/rev"; echo healthy >"$T/health"; rc=$(run_agent)
 check $([ "$rc" = 0 ] && [ "$(env_tag)" = sha-ccccccc ] && [ ! -e "$T/state/failed" ] && echo 0 || echo 1) 'a newer image is deployed and clears the failure' "exit $rc, tag $(env_tag)"
+
+echo "== healthy but not serving the application (SPA/config/API check of deploy.sh): rollback"
+setup; touch "$T/app_broken"; rc=$(run_agent)
+check $([ "$rc" = 1 ] && [ "$(env_tag)" = sha-aaaaaaa ] && [ "$(cat "$T/state/failed" 2>/dev/null)" = sha-bbbbbbb ] && echo 0 || echo 1) 'a release that is healthy but serves no application is rolled back and remembered' "exit $rc, tag $(env_tag)"
+check $(grep -q 'exec -T backend wget' "$T/calls.log" && echo 0 || echo 1) 'the gate really checks inside the backend container'
+setup; rc=$(run_agent)
+check $([ "$rc" = 0 ] && grep -c 'exec -T backend wget' "$T/calls.log" | grep -q 3 && echo 0 || echo 1) 'a healthy release passes all three application checks (shell, config, API 401)' "exit $rc"
 
 echo "== compose up fails (backend never healthy): rollback must still happen"
 setup; touch "$T/up_fail_once"; rc=$(run_agent)

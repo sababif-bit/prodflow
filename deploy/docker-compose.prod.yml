@@ -26,6 +26,9 @@ services:
       AUTH_HOST: ${AUTH_HOST:?public hostname of Keycloak}
       TLS_DIRECTIVE: ${TLS_DIRECTIVE:-}
       ACME_CA: ${ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}
+      # Caddyfile is a single-file bind mount: after a release (git checkout replaces the file) the container would keep the OLD file.
+      # The release tag changes with every deployment, so Compose recreates Caddy and it reads the Caddyfile of the new release.
+      RELEASE_TAG: ${IMAGE_TAG:?image tag (sha-...) to run}
     ports:
       - "${PUBLISH_BIND:-0.0.0.0}:${HTTP_PUBLISH:-80}:80"
       - "${PUBLISH_BIND:-0.0.0.0}:${HTTPS_PUBLISH:-443}:443"
