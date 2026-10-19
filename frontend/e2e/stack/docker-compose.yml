@@ -64,7 +64,8 @@ services:
   backend:
     image: prodflow-backend:fe-e2e
     build:
-      context: ../../../backend
+      context: ../../..
+      dockerfile: backend/Dockerfile
     environment:
       DB_URL: jdbc:postgresql://db:5432/prodflow
       DB_USER: prodflow

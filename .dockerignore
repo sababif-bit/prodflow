@@ -1,0 +1,15 @@
+# Build context of backend/Dockerfile is the REPOSITORY ROOT (the image contains the Angular SPA and the Spring Boot backend).
+# Allowlist: nothing is sent to the Docker daemon unless it is needed for the build. In particular never the root .env,
+# keys, .git, node_modules, local build output or documentation.
+*
+!backend/pom.xml
+!backend/src
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/angular.json
+!frontend/tsconfig.json
+!frontend/tsconfig.app.json
+!frontend/.postcssrc.json
+!frontend/src
+!frontend/public
+**/*.spec.ts

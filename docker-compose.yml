@@ -80,7 +80,9 @@ services:
         condition: service_completed_successfully
 
   backend:
-    build: ./backend
+    build:
+      context: .                      # the image also contains the Angular SPA (frontend/), see backend/Dockerfile
+      dockerfile: backend/Dockerfile
     environment:
       DB_URL: jdbc:postgresql://db:5432/prodflow
       DB_USER: prodflow
