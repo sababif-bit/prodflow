@@ -11,6 +11,7 @@ Server-Verzeichnis `/opt/prodflow/repo`.
 cd frontend && npm run lint && npm test -- --no-watch && npm run build        # Lint, 119 Unit-Tests, Build
 cd backend && mvn -B verify                                                   # 132 Tests, Docker nötig
 bash scripts/test-deploy-agent.sh && bash scripts/test-caddyfile.sh           # Betriebsskripte, Caddyfile
+bash scripts/test-deploy-gate.sh                                              # echtes deploy.sh gegen echte Container (braucht Image prodflow-backend:prodcheck)
 bash frontend/e2e/stack.sh reset && (cd frontend && npx playwright test)      # 30 Browser-Tests gegen den Einweg-Stack
 docker build -f backend/Dockerfile --build-arg GIT_SHA=$(git rev-parse HEAD) -t prodflow-backend:prodcheck .
 TEST_IMAGE_TAG=prodcheck bash scripts/test-prod-stack.sh                      # Caddy, HTTPS, CSP, Keycloak, Browser durch Caddy
@@ -64,7 +65,7 @@ Abmelden (führt zurück zur Anmeldemaske), Entwicklerkonsole ohne „Content Se
 Das Zurücksetzen der Demo-Daten (`reset-demo-data.sh`) und `demo-run.sh` brauchen weiterhin eine eigene Freigabe.
 
 ## 6. Rollback
-- **Anwendung/Caddy:** `touch /var/lib/prodflow/hold`; `cd /opt/prodflow/repo/deploy && sudo bash deploy.sh sha-<früherer Commit>` (stellt Repository, Compose und Caddyfile des alten Releases wieder her; Caddy wird neu erzeugt);
+- **Anwendung/Caddy:** `touch /var/lib/prodflow/hold`; `cd /opt/prodflow/repo/deploy && sudo env DEPLOY_ROLLBACK_TO_BACKEND_ONLY=1 flock -n -E 99 /var/lib/prodflow/agent.lock bash deploy.sh sha-fb08e68` (stellt Repository, Compose und Caddyfile des alten Releases wieder her; Caddy wird neu erzeugt; der Schalter ist nötig, weil `sha-fb08e68` keine Oberfläche hat, und überspringt nur deren Prüfung; Exit 99 = ein Agentenlauf ist aktiv). Der ausführliche, schrittweise Plan mit Gates steht in `docs/agents/PLAN_B_ROLLOUT_RUNBOOK.md`;
   danach Fehler beheben, `rm /var/lib/prodflow/hold`. Ab dem zweiten Release erledigt `deploy.sh` das bei einem Fehler selbst.
 - **Keycloak:** additiv, kein Rollback nötig; bei Bedarf die drei Werte wieder entfernen (Abschnitt 3).
 - **Daten:** keine Schemaänderung, keine Migration, keine Datenänderung durch diesen Rollout.

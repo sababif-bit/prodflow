@@ -262,9 +262,12 @@ Umgesetzt in `.github/workflows/ci-cd.yml`, `deploy/agent.sh`, `deploy/deploy.sh
    gesetzt, meldet der Job „nicht ausgeführt" (Warnung), er besteht nicht stillschweigend.
 - **Sicherheit:** Der Server nimmt keine eingehenden Verwaltungsverbindungen für Deployments an (kein SSH-Deploy); der Agent zieht nur aus dem eigenen GHCR-Paket. Vertrauensanker ist
   das Repository (`main`) und die CI; der Agent läuft als root (Docker) auf einer wegwerfbaren Demo-Instanz.
-- **Rollback von Hand:** `touch /var/lib/prodflow/hold` (pausiert den Agenten), dann `deploy/deploy.sh sha-<früherer Commit>`; fortsetzen mit
-  `rm /var/lib/prodflow/hold`. Ohne Pause würde der Agent innerhalb einer Minute wieder das Image des Zeigers `prod` ausrollen.
-- **Test:** `scripts/test-deploy-agent.sh` (20 Fälle mit Attrappen für `docker`/`git`: keine Änderung, Deploy, Rollback, Fehlermerker,
+- **Pausieren (`hold`):** Nur `agent.sh` prüft `/var/lib/prodflow/hold`, und zwar einmal beim Start eines Laufs (ein bereits laufender Lauf wird nicht unterbrochen); `deploy.sh` ignoriert sie. Ein Handlauf von `deploy.sh` nimmt die Sperre des Agenten nicht
+  selbst, deshalb: `sudo flock -n -E 99 /var/lib/prodflow/agent.lock bash deploy.sh sha-<commit>` (99 = Agent läuft).
+- **Rollback von Hand:** `touch /var/lib/prodflow/hold`, dann wie oben `deploy.sh sha-<früherer Commit>`; fortsetzen mit `rm /var/lib/prodflow/hold`. Ohne Pause würde der Agent innerhalb einer Minute wieder das Image des Zeigers `prod` ausrollen.
+  Führt das frühere Release **keine Oberfläche** (z. B. `sha-fb08e68`), lehnt das Anwendungs-Gate es ab und stellt das neue wieder her; dann `DEPLOY_ROLLBACK_TO_BACKEND_ONLY=1` setzen (überspringt nur die Prüfung von `/` und `/config.json`, mit Warnung; Health und API-401 bleiben).
+  Alternative ohne Schalter: erst `git checkout --detach <früherer Commit>` auf dem Server, dann dessen `deploy.sh`.
+- **Test:** `scripts/test-deploy-gate.sh` führt das echte `deploy.sh` gegen echte Container aus (Gate, Override, Rollback mit neuem und altem Skript, Caddy-Neuerzeugung); `scripts/test-deploy-agent.sh` (42 Fälle mit Attrappen für `docker`/`git`: keine Änderung, Deploy, Rollback, Fehlermerker,
   Registry-Fehler, ungültige Eingaben, Pausendatei, Ersetzen der Skripte während des Laufs).
 - **Offen:** Ein echter Lauf auf GitHub (Push nötig, Freigabe) und auf AWS; `PROD_APP_URL` setzen; GHCR-Zeiger-Tagging mit `GITHUB_TOKEN`
   ist in `docker/build-push-action` üblich, aber hier noch nicht gelaufen.

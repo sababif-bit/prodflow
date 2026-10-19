@@ -155,9 +155,10 @@ Wirkungsprüfung: nach dem nächsten Merge zeigt der Lauf *Verify* grün **und**
 |---|---|
 | Status | `docker ps --format '{{.Names}}  {{.Status}}'` · `systemctl list-timers prodflow-agent.timer` |
 | Logs | `docker logs --tail 50 prodflow-prod-backend-1` (oder `-caddy-1`, `-keycloak-1`) · `journalctl -u prodflow-agent -n 50 --no-pager` |
-| Neue Version von Hand | `/opt/prodflow/repo/deploy/deploy.sh sha-<commit>` |
+| Neue Version von Hand | `cd /opt/prodflow/repo/deploy && sudo flock -n -E 99 /var/lib/prodflow/agent.lock bash deploy.sh sha-<commit>` (die Sperre des Agenten verhindert einen gleichzeitigen Agentenlauf; Exit 99 = Agent läuft gerade) |
+| Rollback auf ein Release ohne Oberfläche (z. B. `sha-fb08e68`) | `cd /opt/prodflow/repo/deploy && sudo env DEPLOY_ROLLBACK_TO_BACKEND_ONLY=1 flock -n -E 99 /var/lib/prodflow/agent.lock bash deploy.sh sha-<früherer Commit>`; der Schalter überspringt NUR die Prüfung von `/` und `/config.json`, Health und die 401-Prüfung gelten weiter. Ohne den Schalter lehnt das Gate das alte Release ab und stellt das neue wieder her. |
 | Agent pausieren / fortsetzen | `touch /var/lib/prodflow/hold` / `rm /var/lib/prodflow/hold` |
-| Keycloak-Administration | vom Laptop: `ssh -i $key -L 8180:127.0.0.1:8180 ubuntu@<IP>` (PowerShell), dann `http://localhost:8180` (Benutzer/Passwort: `KC_BOOTSTRAP_ADMIN_*` in `deploy/.env`) |
+| Keycloak-Administration | vom Laptop: `ssh -i $key -N -L 18280:127.0.0.1:8180 ubuntu@<IP>` (PowerShell; lokal **18280**, weil der Entwicklungs-Keycloak lokal 8180 belegt), dann `http://localhost:18280` (Benutzer/Passwort: `KC_BOOTSTRAP_ADMIN_*` in `deploy/.env`) |
 | IP hat sich geändert (Stopp/Start ohne Elastic IP) | `bash /opt/prodflow/repo/scripts/duckdns-update.sh /opt/prodflow/repo/deploy/.env` und 1–2 Minuten warten |
 | DuckDNS-Token wechseln | `read -rs -p "Neuer Token: " T; echo; sudo sed -i "s/^DUCKDNS_TOKEN=.*/DUCKDNS_TOKEN=$T/" /opt/prodflow/repo/deploy/.env; unset T` |
 | Abbau (nach 26.10., Issue #13) | Instanz beenden, Elastic IP freigeben, Volumes löschen, DuckDNS-Namen entfernen |
