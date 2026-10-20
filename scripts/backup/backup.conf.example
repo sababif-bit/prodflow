@@ -1,0 +1,11 @@
+# /etc/prodflow-backup/backup.conf  (owner root, mode 600). DRAFT template, S10B. It contains NO secrets: only paths, limits and the
+# fingerprint of the PUBLIC encryption key. The matching private key lives on the laptop and must never be copied to the server.
+BACKUP_DIR=/var/backups/prodflow
+GNUPGHOME_BACKUP=/etc/prodflow-backup/gnupg
+# 40 hexadecimal characters (gpg --fingerprint on the laptop), upper case, no spaces
+RECIPIENT_FPR=0000000000000000000000000000000000000000
+COMPOSE_PROJECT=prodflow-prod
+EXPECT_PG_MAJOR=16
+KEEP_SETS=7
+MIN_FREE_MB=1024
+DUMP_TIMEOUT_S=300
