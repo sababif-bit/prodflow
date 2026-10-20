@@ -9,7 +9,9 @@
 #      data on tmpfs (nothing persists), random password, no published ports, all labelled pfrestore=<run id>;
 #   3. decrypts with the private key from the local gpg keyring (a passphrase prompt may appear) and streams the plaintext straight into
 #      pg_restore --exit-on-error: the plaintext dump never touches the disk;
-#   4. compares the restored data with the manifest (exact table counts, Flyway version; for Keycloak the realm, the three clients and the three roles);
+#   4. compares the restored data with the manifest (exact table counts, Flyway version; for Keycloak the realm, the three clients and the three roles)
+#      and checks the structure (no NOT VALID constraint, no invalid index, sequences within their bounds; constraint/index/sequence counts against
+#      the struct.* lines of a script-v2 manifest). All catalog queries are read-only and show no table values;
 #   5. removes exactly the containers and the network it created (unless --keep).
 # THERE IS NO PARAMETER THAT SELECTS A TARGET: the only restore target this script can ever write to is the throw-away container it creates itself.
 # Restoring into production is deliberately NOT part of this script (see docs/backup-recovery-konzept.md, section "Echte Wiederherstellung").
@@ -61,6 +63,37 @@ cleanup() {
 trap cleanup EXIT
 docker network create --internal --label "pfrestore=$RUN" "$RUN" >/dev/null || { echo "restore-test: cannot create the isolated network" >&2; exit 3; }
 
+# Structure of the restored database: constraints, indexes, sequences. Read-only catalog queries; no table values are shown or compared.
+# Keep STRUCT_SQL identical to backup-db.sh (it produces the struct.* manifest lines; scripts/test-backup-roundtrip.sh proves they agree).
+STRUCT_SQL="/* pf:structure */ select 'struct.constraint.'||c.contype::text||'='||count(*) from pg_constraint c join pg_namespace n on n.oid=c.connamespace where n.nspname not in ('pg_catalog','information_schema','pg_toast') group by c.contype union all select 'struct.indexes='||count(*) from pg_indexes where schemaname not in ('pg_catalog','information_schema','pg_toast') union all select 'struct.sequences='||count(*) from pg_sequences where schemaname not in ('pg_catalog','information_schema','pg_toast') order by 1"
+check_structure() { # uses $name, $man and rq() of restore_one
+  local n want have behind
+  # always (also for sets written by script v1, whose manifest has no struct.* lines): nothing may be left invalid by the restore
+  n=$(rq "/* pf:invalid-constraints */ select count(*) from pg_constraint c join pg_namespace s on s.oid=c.connamespace where not c.convalidated and s.nspname not in ('pg_catalog','information_schema','pg_toast')" 2>/dev/null) || n=error
+  [ "$n" = 0 ] && ok "$name: every constraint is validated (no NOT VALID constraint)" || bad "$name: NOT VALID constraints after the restore: $n"
+  n=$(rq "/* pf:invalid-indexes */ select count(*) from pg_index i join pg_class k on k.oid=i.indexrelid join pg_namespace s on s.oid=k.relnamespace where (not i.indisvalid or not i.indisready) and s.nspname not in ('pg_catalog','information_schema','pg_toast')" 2>/dev/null) || n=error
+  [ "$n" = 0 ] && ok "$name: every index is valid and ready" || bad "$name: invalid or not-ready indexes after the restore: $n"
+  n=$(rq "/* pf:sequence-bounds */ select count(*) from pg_sequences where schemaname not in ('pg_catalog','information_schema','pg_toast') and last_value is not null and (last_value < min_value or last_value > max_value)" 2>/dev/null) || n=error
+  [ "$n" = 0 ] && ok "$name: every sequence value lies within its own bounds" || bad "$name: sequences outside their bounds after the restore: $n"
+  # against the manifest (sets written by script v2 or later)
+  have=$(rq "$STRUCT_SQL" 2>/dev/null | grep '^struct\.' | sort) || have=''
+  want=$(grep '^struct\.' "$man" | sort)
+  if [ -z "$want" ]; then
+    say "INFO  $name: the manifest has no struct.* lines (written by script v1): constraint, index and sequence counts are not compared"
+  elif [ -n "$have" ] && [ "$have" = "$want" ]; then
+    ok "$name: constraint, index and sequence counts match the manifest ($(printf '%s\n' "$want" | tr '\n' ' ' | sed 's/struct\.//g; s/ $//'))"
+  else
+    bad "$name: structure differs from the manifest (manifest: $(printf '%s\n' "$want" | tr '\n' ' ' | sed 's/struct\.//g; s/ $//'); restored: $(printf '%s\n' "$have" | tr '\n' ' ' | sed 's/struct\.//g; s/ $//'))"
+  fi
+  # informational only: a sequence behind the maximum of the column it belongs to is legal (explicit-id inserts), so it never fails the test
+  behind=$(rq "/* pf:sequence-owned */ with own as (select d.objid as seq, d.refobjid as tbl, a.attname as col from pg_depend d join pg_class s on s.oid=d.objid and s.relkind='S' join pg_attribute a on a.attrelid=d.refobjid and a.attnum=d.refobjsubid where d.classid='pg_class'::regclass and d.refclassid='pg_class'::regclass and d.deptype in ('a','i')) select count(*) from own o join pg_class sc on sc.oid=o.seq join pg_namespace sn on sn.oid=sc.relnamespace join pg_sequences q on q.schemaname=sn.nspname and q.sequencename=sc.relname where q.last_value is not null and ((xpath('/row/m/text()', query_to_xml(format('select max(%I) as m from %s', o.col, o.tbl::regclass), false, true, '')))[1]::text)::numeric > q.last_value" 2>/dev/null) || behind=unknown
+  case "$behind" in
+    0) ok "$name: sequences owned by a column are not behind that column's maximum" ;;
+    unknown) say "INFO  $name: owned-sequence consistency could not be evaluated (informational)" ;;
+    *) say "INFO  $name: $behind owned sequence(s) are behind their column's maximum (legal after explicit-id inserts; informational)" ;;
+  esac
+}
+
 restore_one() { # name
   local name=$1 man="$SETDIR/$1.manifest" file major c pw t want have start dur flyway_want flyway_have
   [ -f "$man" ] || { bad "$name: manifest missing"; return; }
@@ -100,6 +133,7 @@ restore_one() { # name
     flyway_have=$(rq "select version from flyway_schema_history where success order by installed_rank desc limit 1" 2>/dev/null)
     [ "$flyway_have" = "$flyway_want" ] && ok "$name: Flyway schema version $flyway_have" || bad "$name: Flyway version is '$flyway_have', manifest says '$flyway_want'"
   fi
+  check_structure
   if [ "$name" = keycloak ]; then
     [ "$(rq "select count(*) from realm where name='prodflow'" 2>/dev/null)" = 1 ] && ok "keycloak: realm prodflow exists" || bad "keycloak: realm prodflow missing"
     have=$(rq "select string_agg(client_id, ',' order by client_id) from client where realm_id=(select id from realm where name='prodflow') and client_id in ('prodflow-api','prodflow-swagger','prodflow-web')" 2>/dev/null)

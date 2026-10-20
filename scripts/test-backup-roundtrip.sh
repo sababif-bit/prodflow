@@ -128,6 +128,9 @@ check $([ -n "$APP_ENC" ] && [ "$APP_ENC" -gt 1024 ] && [ -n "$KC_ENC" ] && [ "$
 check $(( cd "$S" && sha256sum -c --quiet SHA256SUMS ) >/dev/null 2>&1 && echo 0 || echo 1) 'SHA256SUMS verifies'
 check $(grep -q '^count.item=15003$' "$S/app.manifest" && grep -q '^count.user_session=400$' "$S/keycloak.manifest" && grep -q '^flyway_latest=100$' "$S/app.manifest" && echo 0 || echo 1) 'manifests carry the exact table counts and the Flyway version'
 check $(head -c 5 "$S/app.dump.gpg" | grep -q PGDMP && echo 1 || echo 0) 'the file on disk is not a plaintext PostgreSQL archive'
+check $(grep -qx 'flyway_latest=' "$S/keycloak.manifest" && grep -q '^flyway_latest=100$' "$S/app.manifest" && echo 0 || echo 1) 'Flyway (real PostgreSQL): application version recorded, Keycloak (no Flyway table) stays empty'
+check $(grep -qE 'ERROR|does not exist' "$T/backup.log" && echo 1 || echo 0) 'Flyway (real PostgreSQL): the backup output contains no SQL error' "$(grep -E 'ERROR|does not exist' "$T/backup.log" | head -2 | tr '\n' ' ')"
+check $(grep -q '^script_version=2$' "$S/app.manifest" && grep -q '^struct.indexes=' "$S/app.manifest" && grep -q '^struct.sequences=' "$S/keycloak.manifest" && echo 0 || echo 1) 'manifests carry script_version=2 and the struct.* lines'
 cp -r "$S" "$T/laptop/$(basename "$S")"   # stands in for fetch-backups.sh (needs ssh, covered by the fake-ssh unit tests)
 LS="$T/laptop/$(basename "$S")"
 
@@ -158,6 +161,15 @@ for spec in "$APP prodflow $RAPP" "$KC keycloak $RKC"; do set -- $spec
   check $([ "$s1" = "$s2" ] && echo 0 || echo 1) "$2: the schema (tables, constraints, indexes, sequences) is identical" "$s1 vs $s2"
 done
 check $([ "$(sq "$APP" prodflow "select last_value from item_id_seq")" = "$(rq "$RAPP" "select last_value from item_id_seq")" ] && echo 0 || echo 1) 'sequence state (item_id_seq) is restored'
+# structure, derived with queries that are written differently from the script's own STRUCT_SQL: primary/foreign/unique/check constraints, indexes, sequences
+SIG="select (select count(*) from pg_constraint where connamespace='public'::regnamespace and contype='p')||'/'||(select count(*) from pg_constraint where connamespace='public'::regnamespace and contype='f')||'/'||(select count(*) from pg_constraint where connamespace='public'::regnamespace and contype='u')||'/'||(select count(*) from pg_constraint where connamespace='public'::regnamespace and contype='c')||'/'||(select count(*) from pg_class where relkind='i' and relnamespace='public'::regnamespace)||'/'||(select count(*) from pg_class where relkind='S' and relnamespace='public'::regnamespace)"
+msig() { local m=$1 k; for k in constraint.p constraint.f constraint.u constraint.c indexes sequences; do v=$(sed -n "s/^struct\.$k=//p" "$m" | head -1); printf '%s/' "${v:-0}"; done | sed 's#/$##'; }
+a=$(sq "$APP" prodflow "$SIG"); b=$(rq "$RAPP" "$SIG"); c=$(msig "$LS/app.manifest")
+check $([ "$a" = "$b" ] && echo 0 || echo 1) "prodflow: constraints (p/f/u/c), indexes and sequences are identical in source and restore: $a" "source $a, restore $b"
+check $([ "$a" = "$c" ] && echo 0 || echo 1) "prodflow: the manifest's struct.* lines equal the independently derived source structure (the script's query is right)" "source $a, manifest $c"
+a=$(sq "$KC" keycloak "$SIG"); b=$(rq "$RKC" "$SIG"); c=$(msig "$LS/keycloak.manifest")
+check $([ "$a" = "$b" ] && [ "$a" = "$c" ] && echo 0 || echo 1) "keycloak: constraints, indexes and sequences: source, restore and manifest agree: $a" "source $a, restore $b, manifest $c"
+check $(grep -q 'PASS  app: every constraint is validated' "$T/restore.log" && grep -q 'PASS  keycloak: constraint, index and sequence counts match the manifest' "$T/restore.log" && grep -q 'PASS  app: every sequence value lies within its own bounds' "$T/restore.log" && echo 0 || echo 1) 'restore-test.sh reported the structure checks as passed for both databases'
 rec="select code||'|'||name||'|'||qty_on_hand from item where code in ('SC-M8','PR-40') order by code"
 check $([ "$(sq "$APP" prodflow "$rec")" = "$(rq "$RAPP" "$rec")" ] && [ "$(rq "$RAPP" "select name from item where code='SC-M8'")" = "Hex screw M8x30 – Müller ü ß 日本" ] && echo 0 || echo 1) 'representative records incl. UTF-8, umlauts, CJK and numeric precision are intact'
 check $([ "$(rq "$RAPP" "select note from purchase_request where id=1")" = "$(sq "$APP" prodflow "select note from purchase_request where id=1")" ] && echo 0 || echo 1) 'multi-line text with quotes and apostrophes is intact'
@@ -187,6 +199,19 @@ check $([ "$rc" = 1 ] && grep -qE 'decrypt or restore failed' "$T/restore.log" &
 # f) restored data that differs from the manifest is detected by the count check
 D=$(mkset set-20260101T000006Z); sed -i 's/^count.item=.*/count.item=15004/' "$D/app.manifest"; resum "$D"; rc=$(restore "$D" --only app)
 check $([ "$rc" = 1 ] && grep -q 'table item has 15003 rows, manifest says 15004' "$T/restore.log" && echo 0 || echo 1) 'a manifest/data count difference is detected (exit 1)' "exit $rc"
+# f2) structure recorded in the manifest differs from what the restore produces
+D=$(mkset set-20260101T000007Z); sed -i 's/^struct.indexes=.*/struct.indexes=999/' "$D/app.manifest"; resum "$D"; rc=$(restore "$D" --only app)
+check $([ "$rc" = 1 ] && grep -q 'structure differs from the manifest' "$T/restore.log" && echo 0 || echo 1) 'a manifest/structure difference (index count) is detected (exit 1)' "exit $rc"
+# f2b) a set in the shape written by script v1 (no struct.* lines) still restores completely with the real input method
+D=$(mkset set-20260101T000008Z); sed -i '/^struct\./d; s/^script_version=.*/script_version=1/' "$D/app.manifest" "$D/keycloak.manifest"; resum "$D"; rc=$(restore "$D")
+check $([ "$rc" = 0 ] && grep -q 'no struct\.\* lines (written by script v1)' "$T/restore.log" && grep -q 'PASS  keycloak: every constraint is validated' "$T/restore.log" && grep -q 'RESULT: all checks passed' "$T/restore.log" && echo 0 || echo 1) 'backward compatibility: a v1-shaped set (no struct.* lines) restores for both databases; only the manifest comparison of the structure is skipped' "exit $rc"
+# f3) a constraint that PostgreSQL itself keeps NOT VALID in the source survives the dump and must be reported after the restore
+#     (runs BEFORE g: the source databases keep their data on tmpfs, so stopping one of them empties it)
+psql_in "$APP" prodflow -q -c "ALTER TABLE item ADD CONSTRAINT item_qty_nonneg CHECK (qty_on_hand >= 0) NOT VALID" >/dev/null
+rc=$(run_backup --label novalid); S4=$(last_set); cp -r "$S4" "$T/laptop/$(basename "$S4")"; rc2=$(restore "$T/laptop/$(basename "$S4")" --only app)
+check $([ "$rc" = 0 ] && [ "$rc2" = 1 ] && grep -q 'NOT VALID constraints after the restore: 1' "$T/restore.log" && echo 0 || echo 1) 'a real NOT VALID constraint is detected after the restore (backup exit 0, restore-test exit 1)' "backup $rc, restore $rc2: $(grep -E 'FAIL' "$T/restore.log" | head -2 | tr '\n' ' ')"
+check $(grep -q 'PASS  app: every index is valid and ready' "$T/restore.log" && grep -q 'PASS  app: constraint, index and sequence counts match the manifest' "$T/restore.log" && echo 0 || echo 1) 'in that run the other structure checks still pass (only the invalid constraint is reported)'
+sleep 1   # set names have a one-second resolution
 # g) backup side: one source database stopped -> app is still backed up, set marked failed
 docker stop "$KC" >/dev/null 2>&1; rc=$(run_backup --label stopped-db); S2=$(last_set)
 check $([ "$rc" = 1 ] && [ -f "$S2/SET_FAILED" ] && [ ! -f "$S2/SET_OK" ] && [ -f "$S2/app.dump.gpg" ] && [ ! -f "$S2/keycloak.dump.gpg" ] && echo 0 || echo 1) 'stopped Keycloak database: exit 1, set marked SET_FAILED, application database still backed up' "exit $rc"
@@ -207,6 +232,17 @@ echo "   source database sizes: app $(psql_in "$APP" prodflow -c 'select pg_data
 echo "   pg_dump -Fc (plain, size only): app $PLAIN_APP bytes; encrypted: app $APP_ENC bytes, keycloak $KC_ENC bytes"
 echo "   backup wall time (both databases, incl. checks): $((t1 - t0)) s; manifest dump seconds: app $(sed -n 's/^dump_seconds=//p' "$S/app.manifest"), keycloak $(sed -n 's/^dump_seconds=//p' "$S/keycloak.manifest")"
 echo "   restore (decrypt+pg_restore): app ${RESTORE_S:-?} s, keycloak ${RESTORE_KC_S:-?} s; whole restore-test run incl. container start and checks: $((t3 - t2)) s"
+
+echo "== 7b. Linux lock-file permissions: the unit suite inside a disposable container (real chmod semantics)"
+LIMG=${PF_LINUX_IMAGE:-postgres:16}
+if docker image inspect "$LIMG" >/dev/null 2>&1 && docker run --rm --network none --label "pfrt=$ID" "$LIMG" sh -c 'command -v bash && command -v gpg && command -v flock && command -v stat' >/dev/null 2>&1; then
+  tar -C "$HERE" -cf - backup test-backup-scripts.sh | docker run -i --rm --network none --memory 512m --label "pfrt=$ID" --name "$ID-linux" "$LIMG" bash -c 'mkdir -p /w/scripts && tar -xf - -C /w/scripts && cd /w/scripts && bash test-backup-scripts.sh' >"$T/linux.log" 2>&1
+  lrc=$?
+  check $([ "$lrc" = 0 ] && echo 0 || echo 1) "the whole unit suite passes on Linux ($LIMG): $(tail -1 "$T/linux.log")" "exit $lrc: $(grep -E '^FAIL' "$T/linux.log" | head -2 | tr '\n' ' ')"
+  check $(grep -q 'PASS  lock file: a new lock file has mode 600' "$T/linux.log" && grep -q 'PASS  lock file: an existing lock file with mode 644 is tightened to 600' "$T/linux.log" && ! grep -q '^SKIP  lock file mode' "$T/linux.log" && echo 0 || echo 1) 'Linux: a new lock file starts with mode 600 and an existing mode-644 lock file becomes 600 (the test ran, it was not skipped)'
+else
+  echo "SKIP  Linux lock-file test: image '$LIMG' is not available locally with bash, gpg, flock and stat (this test never pulls images; set PF_LINUX_IMAGE to another local image)"
+fi
 
 echo "== 8. isolation and cleanup"
 cleanup; trap - EXIT

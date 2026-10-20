@@ -37,13 +37,23 @@ case "$sub" in
     echo "$run|$proj|$svc|sha256:fakeimage" ;;
   exec) c=$(cname "$@"); shift_args=("$@")
     case "$*" in
+      *pf:structure*) [ -e "$T/struct_fail_$c" ] && exit 1
+        if [ -f "$T/restore_struct_${c##*-}" ]; then cat "$T/restore_struct_${c##*-}"
+        else case "$c" in prodflow-prod-db-1|*-app) printf 'struct.constraint.f=3\nstruct.constraint.p=5\nstruct.constraint.u=2\nstruct.indexes=7\nstruct.sequences=4\n' ;; *) printf 'struct.constraint.p=89\nstruct.indexes=200\nstruct.sequences=0\n' ;; esac; fi ;;
+      *pf:invalid-constraints*) [ -e "$T/q_fail_invalid-constraints" ] && exit 1; cat "$T/restore_invalid_constraints" 2>/dev/null || echo 0 ;;
+      *pf:invalid-indexes*) [ -e "$T/q_fail_invalid-indexes" ] && exit 1; cat "$T/restore_invalid_indexes" 2>/dev/null || echo 0 ;;
+      *pf:sequence-bounds*) cat "$T/restore_sequence_bounds" 2>/dev/null || echo 0 ;;
+      *pf:sequence-owned*) cat "$T/restore_sequence_owned" 2>/dev/null || echo 0 ;;
       *printenv\ POSTGRES_USER*) case "$c" in prodflow-prod-db-1) echo prodflow ;; *) echo keycloak ;; esac ;;
       *printenv\ POSTGRES_DB*) case "$c" in prodflow-prod-db-1) echo prodflow ;; *) echo keycloak ;; esac ;;
       *pg_dump*) [ -e "$T/fail_$c" ] && exit 1; [ -e "$T/empty_$c" ] && exit 0; printf 'PGDMP-FAKE-%s-' "$c"; head -c 4000 /dev/zero | tr '\0' 'x' ;;
       *"show server_version_num"*) if [ -e "$T/old_pg" ]; then echo 150004; else echo 160015; fi ;;
       *"show server_version"*) echo 16.15 ;;
       *query_to_xml*) case "$c" in prodflow-prod-db-1) printf 'bom_line=4\nitem=6\nproduction_order=3\n' ;; *) printf 'client=7\nrealm=1\nuser_entity=3\nuser_session=2\n' ;; esac ;;
-      *flyway_schema_history*) case "$c" in prodflow-prod-db-1|*-app) echo 100 ;; *) echo '' ;; esac ;;
+      # Flyway, as PostgreSQL behaves: the existence lookup never fails; ANY other statement that names the table fails where the table is missing
+      # (Keycloak), because PostgreSQL resolves table names while it analyses the statement, whatever CASE branch would run.
+      *"to_regclass('public.flyway_schema_history') is not null"*) [ -e "$T/flyway_lookup_fail" ] && exit 1; case "$c" in prodflow-prod-db-1|*-app) echo t ;; *) echo f ;; esac ;;
+      *flyway_schema_history*) case "$c" in prodflow-prod-db-1|*-app) echo 100 ;; *) echo 'ERROR:  relation "flyway_schema_history" does not exist' >&2; exit 1 ;; esac ;;
       *pg_database_size*) echo 8123456 ;;
       *pg_isready*) exit 0 ;;
       *pg_restore*) cat >"$T/restored_${c##*-}.in"; sha256sum <"$T/restored_${c##*-}.in" | cut -c1-16 >"$T/restored_${c##*-}.sha"; [ -e "$T/restore_fail" ] && exit 1; exit 0 ;;
@@ -80,7 +90,9 @@ EOF
 run_backup() { ( export BACKUP_CONF="$T/backup.conf" BACKUP_TEST_UID=0 GNUPGHOME="$T/gpg-pub"; bash "$B/backup-db.sh" "$@" ) >"$T/out.log" 2>&1; echo $?; }
 sets() { ls -1d "$T/backups"/set-* 2>/dev/null | wc -l | tr -d ' '; }
 last_set() { ls -1d "$T/backups"/set-* 2>/dev/null | sort | tail -1; }
-reset_state() { rm -rf "$T/backups"/* "$T"/wrong_* "$T"/fail_* "$T"/empty_* "$T"/old_pg "$T"/flock_busy "$T"/stopped_* "$T/docker.log" 2>/dev/null; mkdir -p "$T/backups"; }
+reset_state() { rm -rf "$T/backups"/* "$T"/wrong_* "$T"/fail_* "$T"/empty_* "$T"/old_pg "$T"/flock_busy "$T"/stopped_* "$T"/struct_fail_* "$T"/flyway_lookup_fail "$T/docker.log" 2>/dev/null; mkdir -p "$T/backups"; }
+skip() { SKIP=$((SKIP + 1)); echo "SKIP  $1"; }
+SKIP=0
 
 echo "== backup-db.sh: successful run"
 reset_state; rc=$(run_backup --label pre-test)
@@ -100,6 +112,26 @@ check $([ "$want" = "$have" ] && echo 0 || echo 1) 'manifest sha256 equals the f
 check $(grep -qiE 'password|secret|token|BEGIN' "$S"/*.manifest && echo 1 || echo 0) 'manifests contain no secret-looking content'
 check $(grep -q 'PGOPTIONS=-c default_transaction_read_only=on' "$T/docker.log" && echo 0 || echo 1) 'database sessions are forced read-only'
 check $(grep -E 'docker exec( -i)? [a-z-]+ (pg_dump)' "$T/docker.log" | grep -qE '(^| )-t( |$)' && echo 1 || echo 0) 'docker exec is never run with a TTY (binary-safe stream)'
+
+echo "== backup-db.sh: Flyway lookup, structure counts and lock file (script v2)"
+check $(grep -q '^flyway_latest=100$' "$S/app.manifest" && grep -qx 'flyway_latest=' "$S/keycloak.manifest" && echo 0 || echo 1) 'Flyway: the application database reports its version, the Keycloak database (no Flyway table) stays empty'
+check $(grep -qE 'ERROR|does not exist' "$T/out.log" && echo 1 || echo 0) 'Flyway: a database without flyway_schema_history produces no SQL error output'
+check $(grep 'flyway_schema_history' "$T/docker.log" | grep -qE 'to_regclass.*from (public\.)?flyway_schema_history' && echo 1 || echo 0) 'Flyway: no single statement combines the existence test with a reference to the table (it fails at parse time)'
+check $(grep -q '^struct.constraint.p=5$' "$S/app.manifest" && grep -q '^struct.constraint.f=3$' "$S/app.manifest" && grep -q '^struct.indexes=7$' "$S/app.manifest" && grep -q '^struct.sequences=4$' "$S/app.manifest" && grep -q '^struct.constraint.p=89$' "$S/keycloak.manifest" && echo 0 || echo 1) 'manifests carry the structure counts (constraints by type, indexes, sequences)'
+check $(grep -q '^script_version=2$' "$S/app.manifest" && echo 0 || echo 1) 'manifests record script_version=2'
+reset_state; touch "$T/flyway_lookup_fail"; rc=$(run_backup)
+check $([ "$rc" = 1 ] && [ -f "$(last_set)/SET_FAILED" ] && grep -q 'cannot look up the Flyway table' "$T/out.log" && echo 0 || echo 1) 'a failing Flyway lookup fails that database (it is no longer silently treated as "no Flyway")' "exit $rc"
+reset_state; touch "$T/struct_fail_prodflow-prod-db-1"; rc=$(run_backup); S3=$(last_set)
+check $([ "$rc" = 1 ] && [ -f "$S3/SET_FAILED" ] && [ ! -f "$S3/app.dump.gpg" ] && [ -f "$S3/keycloak.dump.gpg" ] && grep -q 'structure counts failed' "$T/out.log" && echo 0 || echo 1) 'a failing structure query fails only that database; the other one is still backed up' "exit $rc"
+UL=$(grep -n '^umask 077' "$B/backup-db.sh" | head -1 | cut -d: -f1); XL=$(grep -n '^exec 8>' "$B/backup-db.sh" | head -1 | cut -d: -f1)
+check $([ -n "$UL" ] && [ -n "$XL" ] && [ "$UL" -lt "$XL" ] && echo 0 || echo 1) 'lock file: umask 077 is set before the lock file is created' "umask line ${UL:-none}, exec line ${XL:-none}"
+check $(grep -qF 'chmod 600 "$BACKUP_DIR/.lock"' "$B/backup-db.sh" && echo 0 || echo 1) 'lock file: an existing lock file (mode 644 from script v1) is tightened to 600'
+mp=$(mktemp); chmod 600 "$mp"
+if [ "$(stat -c %a "$mp")" = 600 ]; then
+  reset_state; rc=$(run_backup); check $([ "$rc" = 0 ] && [ "$(stat -c %a "$T/backups/.lock")" = 600 ] && echo 0 || echo 1) 'lock file: a new lock file has mode 600' "mode $(stat -c %a "$T/backups/.lock" 2>/dev/null)"
+  reset_state; : >"$T/backups/.lock"; chmod 644 "$T/backups/.lock"; rc=$(run_backup); check $([ "$rc" = 0 ] && [ "$(stat -c %a "$T/backups/.lock")" = 600 ] && echo 0 || echo 1) 'lock file: an existing lock file with mode 644 is tightened to 600' "mode $(stat -c %a "$T/backups/.lock" 2>/dev/null)"
+else skip 'lock file mode (this file system ignores chmod, as on a Windows temp directory); the source-order checks above still apply'; fi
+rm -f "$mp"
 
 echo "== backup-db.sh: guards (nothing may be written)"
 reset_state; GNUPGHOME="$T/gpg-priv" gpg --batch --export-secret-keys "$FPR" 2>/dev/null | GNUPGHOME="$T/gpg-pub" gpg --batch --quiet --import >/dev/null 2>&1
@@ -161,8 +193,10 @@ rm -rf "$DEST"; echo tampered >>"$S/app.dump.gpg"; rc=$(fetch)
 check $([ "$rc" = 1 ] && [ ! -d "$DEST/$SNAME" ] && grep -q 'verification failed' "$T/fetch.log" && echo 0 || echo 1) 'a set that does not match SHA256SUMS is rejected and removed' "exit $rc"
 rm -rf "$DEST"; reset_state; run_backup >/dev/null; touch "$T/ssh_fail"; rc=$(fetch); rm -f "$T/ssh_fail"
 check $([ "$rc" = 1 ] && [ ! -d "$DEST/$(basename "$(last_set)")" ] && echo 0 || echo 1) 'a failed transfer leaves no partial set and exits 1' "exit $rc"
-rc=$(bash "$B/fetch-backups.sh" --host ubuntu@203.0.113.9 --key "$T/key.pem" --dest "$HERE/../frontend/zz-fetch-inside-repo" >"$T/fetch.log" 2>&1; echo $?)
-check $([ "$rc" = 2 ] && grep -q 'Git work tree' "$T/fetch.log" && echo 0 || echo 1) 'a destination inside a Git repository is refused' "exit $rc"; rm -rf "$HERE/../frontend/zz-fetch-inside-repo"
+if [ "$(cd "$HERE/.." && git rev-parse --is-inside-work-tree 2>/dev/null)" = true ]; then
+  rc=$(bash "$B/fetch-backups.sh" --host ubuntu@203.0.113.9 --key "$T/key.pem" --dest "$HERE/../frontend/zz-fetch-inside-repo" >"$T/fetch.log" 2>&1; echo $?)
+  check $([ "$rc" = 2 ] && grep -q 'Git work tree' "$T/fetch.log" && echo 0 || echo 1) 'a destination inside a Git repository is refused' "exit $rc"; rm -rf "$HERE/../frontend/zz-fetch-inside-repo"
+else skip 'destination inside a Git repository (these scripts are not inside a Git work tree here, e.g. in a disposable container)'; fi
 
 echo "== restore-test.sh (fake docker; real gpg decryption)"
 reset_state; rc=$(run_backup); S=$(last_set); : >"$T/run_ids"; : >"$T/docker.log"   # the restore test is judged on its own docker calls only
@@ -182,6 +216,27 @@ printf 'bom_line=4\nitem=6\nproduction_order=3\n' >"$T/restore_counts_app"; touc
 check $([ "$rc" = 1 ] && grep -q 'decrypt or restore failed' "$T/restore.log" && echo 0 || echo 1) 'a failing pg_restore fails the test' "exit $rc"
 rc=$( ( export GNUPGHOME="$T/gpg-pub"; bash "$B/restore-test.sh" --set "$S" --only app ) >"$T/restore.log" 2>&1; echo $?)
 check $([ "$rc" = 1 ] && grep -q 'decrypt or restore failed' "$T/restore.log" && echo 0 || echo 1) 'without the private key the restore cannot decrypt' "exit $rc"
+echo "-- structure validation (constraints, indexes, sequences)"
+rc=$(restore); check $([ "$rc" = 0 ] && grep -q 'every constraint is validated' "$T/restore.log" && grep -q 'every index is valid and ready' "$T/restore.log" && grep -q 'sequence value lies within its own bounds' "$T/restore.log" && grep -q 'constraint, index and sequence counts match the manifest' "$T/restore.log" && echo 0 || echo 1) 'a restore passes the structure checks and the counts match the manifest' "exit $rc"
+printf '1\n' >"$T/restore_invalid_constraints"; rc=$(restore --only app); rm -f "$T/restore_invalid_constraints"
+check $([ "$rc" = 1 ] && grep -q 'NOT VALID constraints after the restore: 1' "$T/restore.log" && echo 0 || echo 1) 'a NOT VALID constraint fails the restore test (exit 1)' "exit $rc"
+printf '2\n' >"$T/restore_invalid_indexes"; rc=$(restore --only app); rm -f "$T/restore_invalid_indexes"
+check $([ "$rc" = 1 ] && grep -q 'invalid or not-ready indexes after the restore: 2' "$T/restore.log" && echo 0 || echo 1) 'an invalid index fails the restore test (exit 1)' "exit $rc"
+printf '1\n' >"$T/restore_sequence_bounds"; rc=$(restore --only app); rm -f "$T/restore_sequence_bounds"
+check $([ "$rc" = 1 ] && grep -q 'sequences outside their bounds after the restore: 1' "$T/restore.log" && echo 0 || echo 1) 'a sequence outside its own bounds fails the restore test (exit 1)' "exit $rc"
+printf 'struct.constraint.f=3\nstruct.constraint.p=5\nstruct.constraint.u=2\nstruct.indexes=6\nstruct.sequences=4\n' >"$T/restore_struct_app"; rc=$(restore --only app)
+check $([ "$rc" = 1 ] && grep -q 'structure differs from the manifest' "$T/restore.log" && echo 0 || echo 1) 'a different index count than the manifest fails the restore test (exit 1)' "exit $rc"
+printf 'struct.constraint.p=5\nstruct.constraint.u=2\nstruct.constraint.f=3\nstruct.indexes=7\nstruct.sequences=3\n' >"$T/restore_struct_app"; rc=$(restore --only app)
+check $([ "$rc" = 1 ] && grep -q 'structure differs from the manifest' "$T/restore.log" && echo 0 || echo 1) 'a different sequence count than the manifest fails the restore test (exit 1)' "exit $rc"
+: >"$T/restore_struct_app"; rc=$(restore --only app); rm -f "$T/restore_struct_app"
+check $([ "$rc" = 1 ] && grep -q 'structure differs from the manifest' "$T/restore.log" && echo 0 || echo 1) 'an empty answer of the structure query is a failure, never a pass (exit 1)' "exit $rc"
+touch "$T/q_fail_invalid-indexes"; rc=$(restore --only app); rm -f "$T/q_fail_invalid-indexes"
+check $([ "$rc" = 1 ] && grep -q 'invalid or not-ready indexes after the restore: error' "$T/restore.log" && echo 0 || echo 1) 'a query error in a structure check fails the restore test instead of being ignored (exit 1)' "exit $rc"
+printf '3\n' >"$T/restore_sequence_owned"; rc=$(restore --only app); rm -f "$T/restore_sequence_owned"
+check $([ "$rc" = 0 ] && grep -q 'INFO  app: 3 owned sequence(s) are behind' "$T/restore.log" && echo 0 || echo 1) 'a sequence behind its column maximum is only informational (exit 0)' "exit $rc"
+V1="$T/v1/set-20260101T000009Z"; rm -rf "$T/v1"; mkdir -p "$T/v1"; cp -r "$S" "$V1"; sed -i '/^struct\./d' "$V1/app.manifest" "$V1/keycloak.manifest"; ( cd "$V1" && sha256sum -- *.gpg *.manifest >SHA256SUMS )
+rc=$( ( export GNUPGHOME="$T/gpg-priv"; bash "$B/restore-test.sh" --set "$V1" ) >"$T/restore.log" 2>&1; echo $?)
+check $([ "$rc" = 0 ] && grep -q 'no struct\.\* lines (written by script v1)' "$T/restore.log" && grep -q 'every constraint is validated' "$T/restore.log" && echo 0 || echo 1) 'a set written by script v1 (no struct.* in the manifest) still restores; only the always-on structure checks apply' "exit $rc"
 echo "-- guards"
 touch "$T/prod_containers_present"; rc=$(restore); check $([ "$rc" = 2 ] && grep -q 'production containers' "$T/restore.log" && echo 0 || echo 1) 'refuses when production containers exist on the Docker engine' "exit $rc"; rm -f "$T/prod_containers_present"
 echo ip-172-31-39-74 >"$T/hostname"; rc=$(restore); check $([ "$rc" = 2 ] && grep -q 'AWS instance' "$T/restore.log" && echo 0 || echo 1) 'refuses on a host named like an AWS instance' "exit $rc"; rm -f "$T/hostname"
@@ -190,5 +245,5 @@ echo tampered >>"$S/keycloak.dump.gpg"; rc=$(restore); check $([ "$rc" = 2 ] && 
 rc=$(bash "$B/restore-test.sh" --set "$T/not-a-set" >"$T/restore.log" 2>&1; echo $?); check $([ "$rc" = 2 ] && echo 0 || echo 1) 'a directory that is not a set is refused' "exit $rc"
 check $(grep -nE -- '--target|--host|--db-host|HOST=|-h [0-9a-z]' "$B/restore-test.sh" | grep -vE 'pg_isready|DOCKER_HOST|hostname' | grep -q . && echo 1 || echo 0) 'the restore script has no option that selects a target host or database'
 
-echo "test-backup-scripts result: $PASS PASS, $FAIL FAIL"
+echo "test-backup-scripts result: $PASS PASS, $FAIL FAIL, $SKIP SKIPPED"
 [ "$FAIL" -eq 0 ]

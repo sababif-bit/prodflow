@@ -21,7 +21,9 @@
 # Configuration: /etc/prodflow-backup/backup.conf (root-owned, mode 600, no secrets; template: scripts/backup/backup.conf.example).
 set -u -o pipefail
 export LC_ALL=C
-SCRIPT_VERSION=1
+SCRIPT_VERSION=2   # 2: manifests carry struct.* counts (constraints by type, indexes, sequences); Flyway lookup fixed; lock file mode 600
+# Structure counts for the restore test (keep identical to STRUCT_SQL in restore-test.sh; scripts/test-backup-roundtrip.sh proves they agree).
+STRUCT_SQL="/* pf:structure */ select 'struct.constraint.'||c.contype::text||'='||count(*) from pg_constraint c join pg_namespace n on n.oid=c.connamespace where n.nspname not in ('pg_catalog','information_schema','pg_toast') group by c.contype union all select 'struct.indexes='||count(*) from pg_indexes where schemaname not in ('pg_catalog','information_schema','pg_toast') union all select 'struct.sequences='||count(*) from pg_sequences where schemaname not in ('pg_catalog','information_schema','pg_toast') order by 1"
 CONF=${BACKUP_CONF:-/etc/prodflow-backup/backup.conf}
 CHECK_ONLY=0
 LABEL=''
@@ -107,9 +109,10 @@ fi
 [ -d "$BACKUP_DIR" ] || mkdir -m 700 "$BACKUP_DIR" || die "cannot create $BACKUP_DIR"
 { [ -n "${BACKUP_TEST_UID:-}" ] || [ "$(stat -c %a "$BACKUP_DIR")" = 700 ]; } || die "$BACKUP_DIR must exist with mode 700"
 [ "$(free_mb "$BACKUP_DIR")" -ge "$MIN_FREE_MB" ] 2>/dev/null || die "less than ${MIN_FREE_MB} MB free in $BACKUP_DIR"
+umask 077   # BEFORE the lock file is created: nothing this script creates may be readable by group or others
 exec 8>"$BACKUP_DIR/.lock"
+chmod 600 "$BACKUP_DIR/.lock" 2>/dev/null || true   # a lock file left by script v1 (mode 644) is tightened; the lock itself is unchanged
 flock -n 8 || { log "another backup is running"; exit 3; }
-umask 077
 
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 SET="set-$TS"
@@ -121,11 +124,18 @@ log "start set $SET (script v$SCRIPT_VERSION${LABEL:+, label $LABEL})"
 
 FAILED=()
 backup_one() { # name container service expected_db
-  local name=$1 c=$2 svc=$3 exp=$4 out man start bytes sha counts flyway dbbytes rc packets
+  local name=$1 c=$2 svc=$3 exp=$4 out man start bytes sha counts hasfw flyway struct dbbytes rc packets
   check_target "$name" "$c" "$svc" "$exp" || return 1
   out="$WORK/$name.dump.gpg"; man="$WORK/$name.manifest"
   counts=$(psqlq "$c" "$T_USER" "$T_DB" -c "select table_name||'='||(xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I', table_schema, table_name), false, true, '')))[1]::text from information_schema.tables where table_schema='public' and table_type='BASE TABLE' order by 1") || { log "$name: table counts failed"; return 1; }
-  flyway=$(psqlq "$c" "$T_USER" "$T_DB" -c "select case when to_regclass('public.flyway_schema_history') is null then '' else coalesce((select version from flyway_schema_history where success order by installed_rank desc limit 1),'') end") || flyway=''
+  # The Flyway table is looked up in its OWN statement: PostgreSQL resolves every table name while it analyses a statement, so one statement
+  # that names a missing table fails even inside a CASE branch that would never run. Databases without Flyway (Keycloak) keep an empty value.
+  hasfw=$(psqlq "$c" "$T_USER" "$T_DB" -c "select to_regclass('public.flyway_schema_history') is not null") || { log "$name: cannot look up the Flyway table"; return 1; }
+  flyway=''
+  if [ "$hasfw" = t ]; then
+    flyway=$(psqlq "$c" "$T_USER" "$T_DB" -c "select coalesce((select version from public.flyway_schema_history where success order by installed_rank desc limit 1),'')") || { log "$name: cannot read the Flyway version"; return 1; }
+  fi
+  struct=$(psqlq "$c" "$T_USER" "$T_DB" -c "$STRUCT_SQL") || { log "$name: structure counts failed"; return 1; }
   dbbytes=$(psqlq "$c" "$T_USER" "$T_DB" -c 'select pg_database_size(current_database())') || dbbytes=''
   start=$SECONDS
   # the dump streams straight into gpg; pipefail makes a failure of either side fail the whole step
@@ -161,6 +171,7 @@ backup_one() { # name container service expected_db
     echo "encrypted_sha256=$sha"
     echo "dump_seconds=$((SECONDS - start))"
     printf '%s\n' "$counts" | sed 's/^/count./'
+    printf '%s\n' "$struct"
   } >"$man.tmp" && mv "$man.tmp" "$man"
   log "$name: ok ($bytes bytes encrypted, $((SECONDS - start)) s)"
   return 0
