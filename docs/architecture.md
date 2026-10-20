@@ -13,16 +13,23 @@ Kurz und begründet – jede Entscheidung muss in der Präsentation erklärbar s
 | 7 | **Tests mit Testcontainers** | Echtes PostgreSQL wie in Produktion; keine H2-Dialekt-Überraschungen. | H2 |
 | 8 | **Single-Tenant-Deployment**: ein Image, je Kunde eine eigene Installation mit eigener DB und `.env` | Einfach, sichere Datentrennung, Kunden können verschiedene Versionen fahren. | Multi-Tenant in einer DB, Kubernetes |
 | 9 | **Images mit Commit-Tag** (`sha-xxxxxxx`) in GHCR | Jede Version reproduzierbar, Rollback = vorherigen Tag starten. | Nur `latest` |
-| 10 | **GitHub Actions**: Test → Build → Deploy, Deploy nur von `main` nach grünen Tests | Ein Werkzeug für Code, Issues und Pipeline. | Jenkins |
-| 11 | **AWS EC2**, Datenbank ab Tag 7 auf **RDS** *(teilweise abgelöst durch #15 – EC2 bleibt, RDS ist nicht entschieden)* | EC2 ist transparent und gut erklärbar; RDS übernimmt Backups. | ECS/Fargate (mehr Konfiguration) |
+| 10 | **GitHub Actions**: Test → Build → Deploy, Deploy nur von `main` nach grünen Tests *(Deploy-Stufe abgelöst durch #18)* | Ein Werkzeug für Code, Issues und Pipeline. | Jenkins |
+| 11 | **AWS EC2**, Datenbank ab Tag 7 auf **RDS** *(teilweise abgelöst durch #15/#17 – EC2 bleibt, RDS ist nicht vorgesehen)* | EC2 ist transparent und gut erklärbar; RDS übernimmt Backups. | ECS/Fargate (mehr Konfiguration) |
 | 12 | **Kein Login im MVP** *(abgelöst durch #14)* | Spring Security + JWT kostet ~1 Tag; nur wenn Zeit bleibt. | — |
 | 13 | **Fehlerformat RFC 7807** (`ProblemDetail`) über `@RestControllerAdvice` | Ein einheitliches Fehlerformat für das Frontend. | — |
 | 14 | **Keycloak + OAuth2/JWT**: Backend ist reiner OAuth2 Resource Server, Rollen ADMIN, PLANNER, PURCHASER als Keycloak-Realm-Rollen *(umgesetzt, PR #2 und #4)* | Login, Passwörter und Tokens übernimmt ein Standardprodukt; das Backend prüft nur Signatur, Ablauf, Issuer und Audience. Rollen setzen die Funktionstrennung Planung/Einkauf durch. | Eigene Benutzerverwaltung, Basic Auth, Session-Login im Backend |
-| 15 | **Geplantes AWS-Deployment: eine EC2-Instanz mit Docker Compose** (PostgreSQL, Keycloak, Backend, Caddy für HTTPS) *(Vorschlag, noch nicht umgesetzt)* | Gleiches Compose-Modell wie lokal, ein Server, wenig Kosten; Caddy holt TLS-Zertifikate automatisch. | RDS und Nginx *(nicht entschieden, kein Bestandteil des aktuellen Vorschlags)* |
-| 16 | **Frontend: Angular 21 + PrimeNG 21 (MIT, exakt gepinnt)**, eigenständig unter `frontend/` *(lokal umgesetzt und getestet, Details `docs/frontend-architecture.md`)* | Standalone-Komponenten, Signals und zoneless; PrimeNG 20/21 sind MIT-lizenziert, 22.x steht unter der PrimeUI-Lizenz (Schlüssel, Erneuerung, Hinweispflicht). Das Frontend bleibt unabhängig wartbar (eigene Abhängigkeiten, Tests, Lint). | PrimeNG 22 (Lizenz), React/Vue (Kenntnisse, Vorgabe des Moduls) |
-| 17 | **Die kompilierte SPA liegt im Backend-Image** (Spring Boot liefert sie same-origin aus; ein Image, ein Tag) *(lokal umgesetzt)* | Atomares Deployment und Rollback über den bestehenden Pull-Agenten, kein CORS, kein zweites Artefakt, kein Versionsversatz zwischen Oberfläche und API. Der Build-Kontext ist das Repository-Wurzelverzeichnis (`backend/Dockerfile`, Stufe `frontend` → `build` → Laufzeit). | Caddy liefert die Dateien (zweites Image/Volume, Agent und CI müssten zwei Artefakte kennen), eigener Webserver-Container |
-| 18 | **Laufzeitkonfiguration über `GET /config.json`, vom Backend aus dem Issuer abgeleitet; Tokens nur im Speicher; Authorization Code + PKCE (S256)** *(lokal umgesetzt)* | Die kompilierten Dateien enthalten keinen umgebungsspezifischen Wert (kein `localhost` in Produktion), und das Frontend kann nie auf einen anderen Identity Provider zeigen als der, dem das Backend vertraut. Der öffentliche Client `prodflow-web` braucht kein Geheimnis. | Konfiguration im Build (pro Umgebung ein Build), Tokens in `localStorage` (XSS), Implicit Flow |
-| 19 | **Content-Security-Policy und Cache-Header im Caddy**; schmaler öffentlicher GET-Zugriff nur für die Dateien und Routen der SPA (Deny-by-default bleibt) *(lokal getestet)* | Die SPA darf nur eigene Dateien laden und nur den Anmeldeserver kontaktieren; gehashte Bundles werden ein Jahr gecacht, `index.html` und `config.json` nie. `style-src` braucht `'unsafe-inline'` (PrimeNG setzt Styles zur Laufzeit), Skripte bleiben strikt `'self'`. Swagger UI erhält als Demo-Ausnahme eine eigene Policy. | CSP nur im Backend (Spring), Nonce-basierte Styles (PrimeNG-Anpassung nötig) |
+| 15 | **Geplantes AWS-Deployment: eine EC2-Instanz mit Docker Compose** (PostgreSQL, Keycloak, Backend, Caddy für HTTPS) *(umgesetzt und verfeinert als #17)* | Gleiches Compose-Modell wie lokal, ein Server, wenig Kosten; Caddy holt TLS-Zertifikate automatisch. | RDS und Nginx *(nicht entschieden, kein Bestandteil des aktuellen Vorschlags)* |
+| 16 | **Swagger UI als erster Demo-Client; Angular zunächst zurückgestellt** *(umgesetzt, Issue #8, PR #26; der Angular-Teil ist überholt durch #20–#23)* | Swagger UI meldet sich per Authorization Code + PKCE bei Keycloak an (öffentlicher Client `prodflow-swagger`, Demo-Benutzer `planner`, `purchaser`, `admin`) und macht die Rollen ohne Frontend vorführbar. Swagger UI und `/v3/api-docs` bleiben **bewusst öffentlich** (sie zeigen nur die API-Beschreibung, keine Daten; temporäre Demo-Ausnahme, Entscheidung D-8); die API selbst verlangt Tokens. | Eigenes Login-Formular, Passwort-Grant (abgeschaltet), Swagger ohne Anmeldung |
+| 17 | **Endgültiges AWS-Deployment: eine EC2-Instanz (Ubuntu 24.04, `t3.small`, laut Planung eu-central-1) mit Docker Compose** – Caddy (HTTPS, Let's Encrypt, zwei DuckDNS-Namen), Backend, Keycloak, zwei PostgreSQL-Container *(umgesetzt, seit 18.10.2026 in Betrieb und verifiziert; ersetzt den Vorschlag #15)* | Ein Server, geringe Kosten (Budget 15 $/Monat), dasselbe Compose-Modell wie lokal, Zertifikate automatisch. Gemessen: im lokalen Test des Produktionsstapels 952 MiB Spitze aller Container (Limits zusammen 1760 MiB); auf der Instanz nach 30 Minuten Betrieb rund 1,3 GB belegt, 560 MB verfügbar, 111 MB Swap von 2 GiB. Öffentlich nur 80/443, SSH nur von der eigenen IP, Keycloak-Admin nur über einen SSH-Tunnel. | RDS (Kosten, kein Lerngewinn), Nginx (Caddy ist kürzer), ECS/EKS (Betriebsaufwand) |
+| 18 | **Pull-basiertes Deployment**: GitHub Actions testet, baut und veröffentlicht das Image (`sha-<7>`, `latest`, Zeiger `prod`); ein systemd-Agent auf dem Server prüft jede Minute den Zeiger, deployt mit Gesundheits- **und** Anwendungs-Gate, rollt bei Fehlern zurück und merkt sich den gescheiterten Tag; der `verify`-Job prüft von außen *(umgesetzt, Issue #18, PR #29; Anwendungs-Gate und Rollback-Schalter seit 20.10.2026)* | Kein eingehender SSH-Zugang für die CI und kein Server-Schlüssel in GitHub; der Server bestimmt den Zeitpunkt; Pause per Hold-Datei; Rollback gegen echte Container getestet (`scripts/test-deploy-gate.sh`). Grenzen: kein Zero-Downtime (beobachtet etwa 27 s), Caddy wird vom Gate nicht geprüft (nur extern). | SSH-Deploy aus der Pipeline, Watchtower o. Ä. |
+| 19 | **Geheimnisse-Strategie**: Alle Geheimnisse entstehen zufällig **auf dem Server** (`deploy/.env`, Rechte 600), nie in Git, Chat, `user-data` oder Logs; Compose verlangt jede Variable mit `${VAR:?}`; GitHub kennt nur die nicht geheime Variable `PROD_APP_URL`; die öffentlichen Clients (PKCE) brauchen kein Client-Geheimnis *(umgesetzt, Issues #14/#16/#17)* | Begrenzt den Schaden bei Fehlern; die Skripte geben nie Werte aus (getestet: kein Geheimnis in den Container-Logs). Bekannte Grenzen: Passwörter erscheinen in `docker inspect` der Container (nur für root lesbar); die Demo-Passwörter bleiben auf dem Server lesbar; das DuckDNS-Token liegt in der `.env`. | AWS Secrets Manager/SSM (Kosten, Aufwand für die Demo), Geheimnisse als GitHub Secrets |
+| 20 | **Frontend: Angular 21 + PrimeNG 21 (MIT, exakt gepinnt)**, eigenständig unter `frontend/` *(umgesetzt; seit 20.10.2026 in Produktion, Details `docs/frontend-architecture.md`)* | Standalone-Komponenten, Signals und zoneless; PrimeNG 20/21 sind MIT-lizenziert, 22.x steht unter der PrimeUI-Lizenz (Schlüssel, Erneuerung, Hinweispflicht). Das Frontend bleibt unabhängig wartbar (eigene Abhängigkeiten, Tests, Lint). | PrimeNG 22 (Lizenz), React/Vue (Kenntnisse, Vorgabe des Moduls) |
+| 21 | **Die kompilierte SPA liegt im Backend-Image** (Spring Boot liefert sie same-origin aus; ein Image, ein Tag) *(umgesetzt; seit 20.10.2026 in Produktion)* | Atomares Deployment und Rollback über den bestehenden Pull-Agenten, kein CORS, kein zweites Artefakt, kein Versionsversatz zwischen Oberfläche und API. Der Build-Kontext ist das Repository-Wurzelverzeichnis (`backend/Dockerfile`, Stufe `frontend` → `build` → Laufzeit). | Caddy liefert die Dateien (zweites Image/Volume, Agent und CI müssten zwei Artefakte kennen), eigener Webserver-Container |
+| 22 | **Laufzeitkonfiguration über `GET /config.json`, vom Backend aus dem Issuer abgeleitet; Tokens nur im Speicher; Authorization Code + PKCE (S256)** *(umgesetzt; seit 20.10.2026 in Produktion)* | Die kompilierten Dateien enthalten keinen umgebungsspezifischen Wert (kein `localhost` in Produktion), und das Frontend kann nie auf einen anderen Identity Provider zeigen als der, dem das Backend vertraut. Der öffentliche Client `prodflow-web` braucht kein Geheimnis. | Konfiguration im Build (pro Umgebung ein Build), Tokens in `localStorage` (XSS), Implicit Flow |
+| 23 | **Content-Security-Policy und Cache-Header im Caddy**; schmaler öffentlicher GET-Zugriff nur für die Dateien und Routen der SPA (Deny-by-default bleibt) *(umgesetzt; im Browser gegen Caddy getestet, seit 20.10.2026 in Produktion verifiziert)* | Die SPA darf nur eigene Dateien laden und nur den Anmeldeserver kontaktieren; gehashte Bundles werden ein Jahr gecacht, `index.html` und `config.json` nie. `style-src` braucht `'unsafe-inline'` (PrimeNG setzt Styles zur Laufzeit), Skripte bleiben strikt `'self'`. Swagger UI erhält als Demo-Ausnahme eine eigene Policy. | CSP nur im Backend (Spring), Nonce-basierte Styles (PrimeNG-Anpassung nötig) |
+
+> **Nummerierung:** #16–#19 sind laut GitHub Issue #23 für Swagger/Demo-Client, AWS-Deployment, pull-basiertes Deployment und Geheimnisse reserviert. Die Frontend-Entscheidungen stehen deshalb als **#20–#23**.
+> GitHub Issue #33 und PR #34 nennen sie noch „ADR #16–#19“ (Stand der Veröffentlichung); maßgeblich ist diese Tabelle.
 
 ## Bewusste Grenzen des MVP
 
@@ -196,10 +203,9 @@ Browser / Token-Abruf ──► keycloak :8180 ──► keycloak-db (PostgreSQL
 - Ports nur auf `127.0.0.1` gebunden; Realm wird aus `keycloak/prodflow-realm.json` importiert.
 - Issuer ist die öffentliche URL `http://localhost:8180/realms/prodflow`, die Schlüssel
   holt das Backend intern über den Container-Namen.
-- CI/CD: Tests und Image-Build nach GHCR laufen; der Deploy-Job überspringt seine
-  Schritte, solange `EC2_HOST` nicht gesetzt ist.
+- CI/CD: Lokal wird nichts ausgeliefert. Die Pipeline (Abschnitt „Pipeline“) testet, baut das Image und veröffentlicht es in GHCR; der Server holt es sich selbst.
 
-### Vorschlag: AWS-Deployment (ADR #15, noch nicht umgesetzt)
+### AWS-Deployment (ADR #15, umgesetzt als ADR #17)
 
 ```
 Internet ──443──► Caddy (HTTPS, Let's-Encrypt-Zertifikate)
@@ -208,10 +214,10 @@ Internet ──443──► Caddy (HTTPS, Let's-Encrypt-Zertifikate)
         alles auf einer EC2-Instanz mit Docker Compose
 ```
 
-- Nicht entschieden: RDS statt PostgreSQL-Container, Nginx statt Caddy.
-- Der Produktionsstapel ist **lokal umgesetzt und getestet** (nächster Abschnitt); ein AWS-Deployment hat noch nicht stattgefunden.
+- Entschieden (ADR #17): PostgreSQL als Container und Caddy als Reverse Proxy; RDS und Nginx sind nicht vorgesehen.
+- Der Produktionsstapel (nächster Abschnitt) läuft seit dem 18.10.2026 auf AWS; Stand 20.10.2026: Revision `b509944` (Image `sha-b509944`), automatische Auslieferung aktiv.
 
-### Produktionsstapel (Issues #14/#16, lokal verifiziert, nicht auf AWS)
+### Produktionsstapel (Issues #14/#16/#17, lokal verifiziert und auf AWS in Betrieb)
 
 `deploy/docker-compose.prod.yml` (ersetzt die frühere Datei mit nur dem Backend), `deploy/Caddyfile`, `deploy/.env.example`,
 `deploy/deploy.sh`, `deploy/bootstrap-server.sh`, `scripts/duckdns-update.sh`.
@@ -226,14 +232,14 @@ Internet ──443──► Caddy (HTTPS, Let's-Encrypt-Zertifikate)
 - **Pfad-Allowlist für Keycloak (Caddy):** öffentlich nur `/realms/prodflow/*`, `/resources/*`, `/robots.txt`. Admin-Konsole,
   Admin-REST-API, Master-Realm, `/metrics`, `/health` und Umgehungsversuche (`..`, `%2e%2e`, `..%2f`) liefern 404. Die Verwaltung läuft
   über einen SSH-Tunnel auf `127.0.0.1:8180` des Servers (`KC_HOSTNAME_ADMIN=http://localhost:8180`).
-- **Anwendung (SPA, ADR #16–#19):** `APP_HOST` liefert auch die Angular-Oberfläche (aus dem Backend-Image). Caddy setzt dort die CSP (`script-src 'self'`, `connect-src` nur `'self'` und der Anmeldeserver, `frame-ancestors 'none'`), `Permissions-Policy` und für gehashte Bundles `Cache-Control: public, max-age=31536000, immutable`; `index.html` und `config.json` bleiben nicht cachebar (Spring Security). Der Angular-Build erzeugt dafür keine Inline-Skripte (`optimization.styles.inlineCritical: false`). Da die Caddyfile eine einzelne Bind-Mount-Datei ist und `git checkout` sie ersetzt, trägt der Caddy-Dienst `RELEASE_TAG=${IMAGE_TAG}`: Jede Version erzeugt den Container neu und lädt so die Caddyfile des Releases.
+- **Anwendung (SPA, ADR #20–#23):** `APP_HOST` liefert auch die Angular-Oberfläche (aus dem Backend-Image). Caddy setzt dort die CSP (`script-src 'self'`, `connect-src` nur `'self'` und der Anmeldeserver, `frame-ancestors 'none'`), `Permissions-Policy` und für gehashte Bundles `Cache-Control: public, max-age=31536000, immutable`; `index.html` und `config.json` bleiben nicht cachebar (Spring Security). Der Angular-Build erzeugt dafür keine Inline-Skripte (`optimization.styles.inlineCritical: false`). Da die Caddyfile eine einzelne Bind-Mount-Datei ist und `git checkout` sie ersetzt, trägt der Caddy-Dienst `RELEASE_TAG=${IMAGE_TAG}`: Jede Version erzeugt den Container neu und lädt so die Caddyfile des Releases.
 - **Backend-Pfade:** `/actuator/health` öffentlich; alle anderen `/actuator/*`-Pfade (auch `/actuator/info`) routet Caddy nicht.
   Swagger UI und `/v3/api-docs` sind als dokumentierte Demo-Ausnahme öffentlich (Entscheidung D-8); die API selbst verlangt Tokens.
 - **Pflichtvariablen:** alle Geheimnisse und Adressen mit `${VAR:?}`: Fehlt eine, startet nichts. Der Import-Guard läuft hier mit den
   `:?`-Werten, es gibt keine Standardwerte.
 - **Server-`.env`:** wird auf dem Server von `bootstrap-server.sh` mit zufälligen Geheimnissen erzeugt (Rechte 600, nie in Git/Chat/user-data).
 - **Deployment-Einheit:** `deploy/deploy.sh sha-<commit>` stellt das Repository auf den Commit, setzt `IMAGE_TAG`, startet den Stapel
-  und wartet auf `healthy`; sonst Rückkehr zum vorherigen Tag. Dasselbe Skript nutzt später der Pull-Agent (Issue #18).
+  und wartet auf `healthy`; sonst Rückkehr zum vorherigen Tag. Dasselbe Skript nutzt der Pull-Agent (Issue #18).
 - **Speicher (gemessen, lokaler Lauf nach Login-, API- und Neustarttests):** Keycloak ≈ 490 MB, Backend ≈ 305 MB, Datenbanken ≈ 85 MB,
   Caddy ≈ 16 MB, zusammen ≈ 0,9 GB (Lauf mit SPA-Image: Keycloak 508 MB, Backend 314 MB, Datenbanken 77 MB, Caddy 53 MB, Summe der Einzelspitzen 952 MB). Eine `t3.small` (2 GB) reicht für den Demolauf voraussichtlich; endgültig nach Messung auf der
   Instanz (`docs/aws-deployment.md`).
@@ -241,12 +247,12 @@ Internet ──443──► Caddy (HTTPS, Let's-Encrypt-Zertifikate)
   interne CA, Hostnamen `app.prodflow.test`/`auth.prodflow.test` im Docker-Netz) und prüft Pflichtvariablen, Import-Guard, HTTPS, echte
   Logins mit PKCE, Token-Refresh, API 401/200/403, die Pfad-Allowlist, veröffentlichte Ports, Neustart und Geheimnisse in Logs
   (`scripts/smoke-auth.sh`, Bash, auch für die Verify-Stufe auf Linux), außerdem `scripts/verify-deployment.sh` (Oberfläche, Laufzeitkonfiguration, API ohne Token, Header) und einen Browsertest durch Caddy (Playwright: Anmeldung, alle Seiten, Neuladen einer Unterseite, Abmelden, Swagger, keine CSP-Verstöße).
-- **Offen/Risiken:** Zertifikate (Let's Encrypt) und DuckDNS sind erst auf AWS prüfbar; Swagger öffentlich; die Demo-Passwörter stehen
-  in `docker inspect` (wie das Admin-Passwort); der alte SSH-Deploy-Job im Workflow nutzt die neue Compose-Datei nicht und wird in #18 ersetzt.
+- **Auf AWS verifiziert (20.10.2026):** echte Let's-Encrypt-Zertifikate für beide Namen (gültig bis 16.01.2027, TLS 1.3, HTTP leitet mit 308 auf HTTPS), `verify-deployment.sh` 41/41, `smoke-auth.sh` 38/38, 30-minütige Beobachtung ohne Neustart, OOM oder Fehler im Backend.
+- **Risiken/Grenzen:** Swagger bleibt öffentlich (Demo-Ausnahme, ADR #16); die Demo-Passwörter stehen in `docker inspect` (wie das Admin-Passwort); keine Backups (Issue #20), kein Infrastruktur-Code (die Instanz wurde von Hand angelegt, `bootstrap-server.sh` richtet sie ein), kein Alarmsystem; der Wiederaufbau wurde nicht geübt (Issue #22).
 
 ## Pipeline: Test → Build → Deploy → Verify (Issue #18, pull-basiert)
 
-Umgesetzt in `.github/workflows/ci-cd.yml`, `deploy/agent.sh`, `deploy/deploy.sh`; lokal getestet, **noch nicht auf AWS**.
+Umgesetzt in `.github/workflows/ci-cd.yml`, `deploy/agent.sh`, `deploy/deploy.sh` (ADR #18); lokal getestet und auf AWS in Betrieb. Die Auslieferung von `b509944` am 20.10.2026 lief kontrolliert von Hand (Agent pausiert), danach war der `verify`-Job grün.
 
 1. **Test** (jeder Push/PR): `mvn verify` mit Testcontainers; **Frontend** (`npm ci`, ESLint, Unit-Tests, Produktions-Build); **Ops** (`scripts/test-deploy-agent.sh`, `scripts/test-caddyfile.sh`).
 2. **Build** (nur `main`, nur wenn Test, Frontend und Ops grün sind; Kontext = Repository-Wurzel, `backend/Dockerfile` baut Angular und Backend in ein Image): Image mit dem Commit (`--build-arg GIT_SHA`, Label `org.opencontainers.image.revision`,
@@ -269,8 +275,7 @@ Umgesetzt in `.github/workflows/ci-cd.yml`, `deploy/agent.sh`, `deploy/deploy.sh
   Alternative ohne Schalter: erst `git checkout --detach <früherer Commit>` auf dem Server, dann dessen `deploy.sh`.
 - **Test:** `scripts/test-deploy-gate.sh` führt das echte `deploy.sh` gegen echte Container aus (Gate, Override, Rollback mit neuem und altem Skript, Caddy-Neuerzeugung); `scripts/test-deploy-agent.sh` (42 Fälle mit Attrappen für `docker`/`git`: keine Änderung, Deploy, Rollback, Fehlermerker,
   Registry-Fehler, ungültige Eingaben, Pausendatei, Ersetzen der Skripte während des Laufs).
-- **Offen:** Ein echter Lauf auf GitHub (Push nötig, Freigabe) und auf AWS; `PROD_APP_URL` setzen; GHCR-Zeiger-Tagging mit `GITHUB_TOKEN`
-  ist in `docker/build-push-action` üblich, aber hier noch nicht gelaufen.
+- **Offen:** Branch-Schutz für `main` (Issue #15), Rückspielübung und Backups (Issues #20/#22). `PROD_APP_URL` ist als Repository-Variable gesetzt; das Tagging des Zeigers `prod` mit `GITHUB_TOKEN` läuft (Image `sha-b509944`, `latest`, `prod` mit demselben Digest).
 
 ## Demo-Daten zurücksetzen und Workflow-Prüfung (Issues #9/#19)
 

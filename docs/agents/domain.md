@@ -26,11 +26,9 @@ If `GLOSSARY.md` does not exist, proceed silently; don't suggest creating it upf
 
 ### Status of the AWS deployment decision
 
-**ADR #15 is a proposal, not a finalized decision.** The single-EC2 setup with Docker Compose
-(PostgreSQL, Keycloak, backend, Caddy for HTTPS) is the current working proposal. Alternatives such as
-**RDS** instead of a PostgreSQL container and **Nginx** instead of Caddy may still be evaluated. Do not treat
-ADR #15 as settled when grilling, writing tickets or implementing; once the deployment architecture is
-decided, record it as a new ADR (#16 onward) and mark ADR #15 accordingly.
+**ADR #15 was a proposal and is now implemented and refined as ADR #17** (one EC2 instance, Docker Compose, PostgreSQL containers, Caddy for HTTPS;
+RDS and Nginx are not planned). ADR numbers #16–#19 are assigned (Swagger demo client, AWS deployment, pull-based deployment, secrets strategy, see GitHub Issue #23)
+and the frontend decisions are #20–#23; the next new ADR is #24. The table in `docs/architecture.md` is the source of truth.
 
 ## Glossary
 

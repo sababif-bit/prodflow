@@ -3,7 +3,7 @@
 Angular 21 + PrimeNG 21 (deutsche Oberfläche). Anmeldung über Keycloak (Authorization Code + PKCE S256, Client `prodflow-web`), Daten über die echte Spring-Boot-REST-API.
 Im Betrieb liegt die kompilierte Anwendung im Backend-Image (`backend/Dockerfile`, Build-Kontext = Repository-Wurzel).
 
-Architektur und Entscheidungen: [`docs/frontend-architecture.md`](../docs/frontend-architecture.md) und ADR #16–#19 in `docs/architecture.md`.
+Architektur und Entscheidungen: [`docs/frontend-architecture.md`](../docs/frontend-architecture.md) und ADR #20–#23 in `docs/architecture.md`.
 Rollout: [`docs/frontend-rollout.md`](../docs/frontend-rollout.md). Screenshots: [`docs/frontend/screenshots`](../docs/frontend/screenshots).
 
 ## Voraussetzungen

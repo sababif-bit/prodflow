@@ -3,7 +3,7 @@
 > **Die Schritt-für-Schritt-Anleitung mit allen Befehlen (PowerShell und Ubuntu) und der Fehlersuche steht in `docs/first-deployment-runbook.md`.**
 > Dieses Dokument enthält den Hintergrund (Ressourcen, Sicherheits- und Kostenhinweise, Betriebswege).
 
-Stand: vorbereitet am 16.10.2026, **noch nicht ausgeführt**. Alle Schritte in der AWS-Konsole führt der Projektverantwortliche aus;
+Stand: vorbereitet am 16.10.2026; **ausgeführt am 18.10.2026**, in Betrieb und verifiziert (20.10.2026: Revision `b509944`, automatische Auslieferung aktiv). Alle Schritte in der AWS-Konsole führt der Projektverantwortliche aus;
 Claude Code hat keinen AWS-Zugriff. Die Sandbox-Regeln (Berechtigungen, Budget 15 $/Monat, Zurücksetzung) sind nicht bestätigt
 (Roadmap D-6): vor dem ersten Schritt prüfen, welche der folgenden Ressourcen die Sandbox erlaubt.
 

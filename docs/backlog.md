@@ -5,6 +5,9 @@ Ein Issue → ein Branch `feature/<GitHub-Issue-Nr>-<name>` → ein Pull Request
 
 Labels: `backend` `frontend` `devops` `docs` `stretch`
 
+> **Stand 20.10.2026:** Nur verifizierter Status. ✅ = umgesetzt und geprüft, ⏳ = teilweise, offen = nicht umgesetzt.
+> Quellen: Repository, GitHub Issues/PRs, `docs/devlog.md`, Verifikation der Produktion vom 20.10.2026.
+>
 > **Hinweis zur Nummerierung (Stand 15.10.):** Die Nummern #1–#18 in diesem Dokument sind
 > **Backlog-Nummern**, keine GitHub-Nummern. Bisher wurden nur die Sicherheitsthemen als
 > GitHub Issues angelegt (siehe „Zusätzlich umgesetzt"). GitHub Issues und Pull Requests teilen
@@ -36,66 +39,62 @@ Spring Boot 3.4, PostgreSQL, Flyway, Docker Compose.
 - [x] AC4: Abschluss verbraucht Material, bucht Fertigprodukt ein
 - [x] Wareneingang nur nach Genehmigung
 
-### #5 CI-Pipeline Test → Build `devops` ⏳ (teilweise – Branch-Schutz noch nicht verifiziert)
-- [x] Pipeline läuft bei Push und Pull Request grün *(geprüft 15.10.: alle 5 Läufe erfolgreich, 3 × Push auf `main`, 2 × Pull Request)*
-- [x] Image erscheint in GHCR mit Tag `sha-…` *(geprüft 15.10.: `sha-1f5d9f8`, `sha-0ca4bc2`, `sha-c1eca31`, `latest`)*
-- [ ] Branch-Schutz für `main` aktiv *(noch nicht verifiziert)*
+### #5 CI-Pipeline Test → Build `devops` ⏳ (Pipeline ✅, Branch-Schutz offen)
+- [x] Pipeline läuft bei Push und Pull Request grün *(geprüft 20.10.: Lauf 39340016246 auf `main` grün: `test`, `frontend`, `ops`, `build`, `verify`)*
+- [x] Image erscheint in GHCR mit Tag `sha-…` *(`sha-b509944`, `latest`, `prod` mit demselben Digest)*
+- [ ] Branch-Schutz für `main` aktiv *(geprüft 20.10.: `main` ist nicht geschützt; GitHub Issue #15)*
 
-### #6 Erstes Deployment auf EC2 `devops`
-**Status: nicht umgesetzt (Stand 15.10.).** Der Deploy-Job der Pipeline überspringt seine
-Schritte, solange `EC2_HOST` nicht gesetzt ist. Zielarchitektur siehe ADR #15 in
-`docs/architecture.md` (Vorschlag, noch nicht entschieden).
-- [ ] Budget Alert 5 € aktiv
-- [ ] EC2 eingerichtet (siehe `docs/architecture.md`)
-- [ ] Secrets in GitHub hinterlegt
-- [ ] Push auf `main` → Health-Check unter `http://<EC2-IP>/actuator/health` liefert `UP`
+### #6 Erstes Deployment auf EC2 `devops` ✅ (mit Abweichungen vom Plan)
+**Status (20.10.2026): umgesetzt und auf AWS verifiziert**, abweichend vom ursprünglichen Plan: kein SSH-Deploy, sondern pull-basiertes
+Deployment (ADR #18); Zielarchitektur ADR #15 → #17 (eine EC2-Instanz, Docker Compose, Caddy, zwei PostgreSQL-Container, kein RDS/Nginx).
+- [ ] Budget Alert aktiv *(nicht verifiziert; AWS-Konsole prüfen)*
+- [x] EC2 eingerichtet (`deploy/bootstrap-server.sh`, Ablauf in `docs/first-deployment-runbook.md`)
+- [x] Geheimnisse nur auf dem Server (`deploy/.env`, Rechte 600); GitHub kennt nur die nicht geheime Variable `PROD_APP_URL` (ADR #19)
+- [x] Push auf `main` → Image in GHCR → Agent deployt → `https://prodflow-farhad.duckdns.org/actuator/health` liefert `UP` *(Revision `b509944` am 20.10.2026)*
 
 ---
 
 ## Sprint 2 – Frontend & Cloud (Tag 5–9)
 
-### #7 Angular-Projekt + Nginx-Container `frontend` `devops`
-> **Historische Planungsannahme:** Nginx stammt aus der ursprünglichen Planung und ist nicht
-> entschieden. Der aktuelle Vorschlag (ADR #15 in `docs/architecture.md`) sieht Caddy als
-> Reverse Proxy vor. Die Nginx-Kriterien vor der Umsetzung mit ADR #15 abgleichen.
-- [ ] Angular + PrimeNG, Nginx liefert das Frontend aus und leitet `/api` ans Backend (kein CORS) *(historische Annahme – Abgleich mit ADR #15)*
-- [ ] API-URL über Environment, nicht hartkodiert
-- [ ] Frontend-Image in Pipeline und Compose
+### #7 Angular-Projekt + Nginx-Container `frontend` `devops` ✅ (Nginx ersetzt)
+> Der ursprüngliche Plan mit Nginx ist überholt: Spring Boot liefert die kompilierte Angular-Anwendung selbst aus, Caddy ist der Reverse Proxy (ADR #21).
+- [x] Angular 21 + PrimeNG 21, same-origin zur API (kein CORS); `/api` und `/config.json` im Entwicklungsmodus über den Dev-Proxy
+- [x] API-URL nicht hartkodiert: die Oberfläche nutzt relative `/api`-URLs; der Anmeldeserver kommt zur Laufzeit aus `GET /config.json` (ADR #22)
+- [x] Frontend in Pipeline und Compose: **kein eigenes Image**, die SPA liegt im Backend-Image (ein Image, ein Tag; CI-Job `frontend` mit Lint, Unit-Tests, Build)
 
-### #8 Artikel- und Stücklistenpflege `frontend`
-- [ ] Artikelliste mit Bestand, Anlegen/Bearbeiten
-- [ ] Stückliste eines Produkts anzeigen, Positionen hinzufügen/entfernen
-- [ ] Fehlermeldungen aus `ProblemDetail` werden angezeigt
+### #8 Artikel- und Stücklistenpflege `frontend` ⏳ (nur lesend)
+- [x] Artikelliste mit Bestand (Suche, Filter, Status), Artikeldetail
+- [ ] Anlegen/Bearbeiten von Artikeln in der Oberfläche *(API vorhanden, keine Oberfläche)*
+- [x] Stückliste eines Produkts anzeigen (**einstufig**, ehrlich so beschriftet)
+- [ ] Positionen hinzufügen/entfernen in der Oberfläche *(API vorhanden, keine Oberfläche)*
+- [x] Fehlermeldungen aus `ProblemDetail` werden angezeigt (409/400 mit Begründung des Servers)
 
-### #9 Produktionsplan und Auftragsanlage `frontend`
-- [ ] Aufträge nach Liefertermin, Status als farbiges Badge
-- [ ] Auftrag anlegen zeigt das Ergebnis der Materialprüfung (Bedarf / Bestand / Fehlmenge)
-- [ ] Button „Abschließen" für freigegebene Aufträge
+### #9 Produktionsplan und Auftragsanlage `frontend` ✅
+- [x] Aufträge nach Liefertermin sortiert, Status als Chip mit Text und Symbol (nicht nur Farbe)
+- [x] Auftrag anlegen zeigt das Ergebnis der Materialprüfung (Bedarf / Bestand / Fehlmenge / neu angefordert)
+- [x] Button „Abschließen“ für freigegebene Aufträge (nur Rollen ADMIN und PLANNER)
 
-### #10 Einkaufsansicht `frontend`
-- [ ] Liste der Bestellanforderungen mit auslösendem Auftrag
-- [ ] Buttons „Genehmigen" und „Wareneingang"
+### #10 Einkaufsansicht `frontend` ✅
+- [x] Liste der Bestellanforderungen mit auslösendem Auftrag
+- [x] Buttons „Genehmigen“ und „Wareneingang buchen“ (nur Rollen ADMIN und PURCHASER; Planer sieht die Funktionstrennung erklärt)
 
-### #11 RDS und Secrets `devops`
-> **Historische Planungsannahme:** RDS stammt aus der ursprünglichen Planung (ADR #11) und ist
-> nicht entschieden. Der aktuelle Vorschlag (ADR #15) sieht PostgreSQL als Container auf der
-> EC2-Instanz vor. Die RDS-Kriterien vor der Umsetzung mit ADR #15 abgleichen; die Anforderung
-> an Zugangsdaten gilt unabhängig davon.
-- [ ] PostgreSQL auf RDS, nur aus der EC2-Security-Group erreichbar *(historische Annahme – Abgleich mit ADR #15)*
-- [ ] Zugangsdaten nur in `.env` auf dem Server / GitHub Secrets
-- [ ] Backup-Aufbewahrung in RDS aktiviert *(historische Annahme – Abgleich mit ADR #15)*
+### #11 RDS und Secrets `devops` ✅ (RDS entfällt)
+> **Entschieden (ADR #17):** PostgreSQL läuft als Container auf der EC2-Instanz, RDS ist nicht vorgesehen. Die Anforderung an Zugangsdaten gilt unverändert (ADR #19).
+- [x] Zugangsdaten nur in `.env` auf dem Server (Rechte 600), nie in Git, Chat, `user-data` oder Logs
+- [ ] Backups: **nicht umgesetzt** (GitHub Issue #20, Bonus); der Datenbestand der Demo ist über `scripts/reset-demo-data.sh` reproduzierbar
 
 ---
 
 ## Sprint 3 – Stabilisierung & Präsentation (Tag 10–12)
 
-### #12 Dokumentation und Architekturdiagramm `docs`
-- [ ] README aktuell, Architekturdiagramm (Browser → Nginx → Backend → RDS, Pipeline)
-- [ ] Debugging-Fall im Devlog ausgearbeitet
+### #12 Dokumentation und Architekturdiagramm `docs` ⏳
+- [x] README aktuell *(Stand 20.10.2026)*
+- [ ] Architekturdiagramm als Grafik *(Textdiagramm in `docs/presentation/folien-gliederung-de.md`; Folie noch zu erstellen, GitHub Issue #12)*
+- [ ] Debugging-Fall im Devlog ausgearbeitet *(Entwurf: `docs/presentation/debugging-fall-csp-de.md`; GitHub Issue #11)*
 
-### #13 Demo vorbereiten `docs`
-- [ ] Demo-Skript (5 Klicks durch den kompletten Workflow)
-- [ ] Backup-Video der Demo
+### #13 Demo vorbereiten `docs` ⏳
+- [x] Demo-Skript *(`docs/presentation/demo-skript-de.md`, Oberfläche, ca. 8 Minuten)*
+- [ ] Backup-Video der Demo *(offen, GitHub Issue #24)*
 
 ---
 
@@ -116,6 +115,24 @@ GitHub Issue #3 · PR #4 (gemergt)
 - [x] Client `prodflow-web` mit PKCE (S256) für das spätere Frontend
 - [x] Zugangsdaten nur über `.env` (Vorlage `.env.example`)
 
+### Pull-basierte Pipeline, Produktionsstapel und erstes AWS-Deployment `devops` ✅
+GitHub Issues #14, #16, #17 (teilweise), #18, #10 · PRs #27, #28, #29, #31, #32
+- [x] Caddy mit HTTPS (Let's Encrypt), zwei Hostnamen, Keycloak-Pfad-Allowlist, Admin nur über SSH-Tunnel
+- [x] Pull-Agent mit Health-Gate, automatischem Rollback und Fehlermerker; `GET /version` und Revisions-Label; `verify`-Job
+- [x] Verifiziert auf AWS am 20.10.2026: `verify-deployment.sh` 41/41, `smoke-auth.sh` 38/38, 30 Minuten Beobachtung ohne Neustart
+- [ ] GitHub Issue #17: Speichermessung als `t3.small`/`t3.medium`-Entscheidung dokumentiert *(Messwerte liegen vor, Entscheidungsvermerk fehlt)*
+
+### Angular-Frontend in Produktion `frontend` ✅
+GitHub Issue #33 · PR #34 · ADR #20–#23
+- [x] Dashboard, Bestand mit einstufiger Stückliste, Fertigungsaufträge, Bestellanforderungen; Rollen und Funktionstrennung
+- [x] Tests: 119 Unit-Tests, 30 Browser-Tests gegen einen Einweg-Stack, Browser-Test durch Caddy (CSP), Gate-Test mit echten Containern
+- [x] Anwendungs-Gate im Deployment und Rollback-Schalter `DEPLOY_ROLLBACK_TO_BACKEND_ONLY`
+
+### Offene GitHub Issues zur Präsentation (Stand 20.10.2026)
+- Pflicht: #11 Debugging-Fall, #12 Folien, #19 Ende-zu-Ende-Abnahme der Demo, #23 Dokumentation/ADRs, #24 Finale Präsentation, Clips, Proben
+- Unterstützend: #15 Branch-Schutz, #22 Wiederaufbau-Übung; Bonus: #20 Backups, #21 *(Rollback nach fehlgeschlagenem Deployment ist im Agenten bereits umgesetzt; Issue auf den Restumfang prüfen)*
+- Nach der Präsentation: #13 AWS-Ressourcen abbauen
+
 ---
 
 ## Stretch Goals
@@ -124,4 +141,4 @@ GitHub Issue #3 · PR #4 (gemergt)
 - #15 Make-or-Buy mit Unteraufträgen `stretch`
 - #16 Materialreservierung `stretch`
 - #17 Excel-Import von Stücklisten (Apache POI) `stretch`
-- #18 HTTPS mit Nginx + Let's Encrypt `stretch` *(historische Planungsannahme: Nginx ist nicht entschieden; im Vorschlag ADR #15 übernimmt Caddy HTTPS – vor der Umsetzung abgleichen)*
+- #18 HTTPS mit Nginx + Let's Encrypt `stretch` *(erledigt mit Caddy statt Nginx, ADR #17)*

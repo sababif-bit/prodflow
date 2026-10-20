@@ -9,8 +9,9 @@
 - Never display, copy, log, or commit secrets. Do not read or output `.env`, server
   `.env` files, `*.pem`, keys, tokens, or credential values; redact values when showing
   config. Tracked files get placeholders only (`.env.example`).
-- A push to `main` triggers the CI/CD pipeline (incl. the deploy job) — treat it as a
-  production action.
+- A push or merge to `main` triggers the CI/CD pipeline (tests, image build and publication to GHCR) and, through the
+  pull-based agent on the production server, an automatic production deployment within minutes unless the agent is
+  paused (hold file) — treat it as a production action.
 
 ## Purpose
 ProdFlow answers: "Can we produce this order — and if not, what must we buy?"
@@ -18,7 +19,7 @@ A production order is checked against the BOM × quantity vs. stock; shortages b
 purchase requests; goods receipt automatically releases waiting orders.
 Final project, Syntax Institut module "Fullstack, Backend & DevOps". Docs are in German.
 
-## Current implemented architecture (local)
+## Implemented architecture (local development stack)
 - Monolith Spring Boot backend in `backend/`, packages under `de.prodflow`:
   `item`, `bom`, `order`, `purchase`, `common` (RFC 7807 `ProblemDetail`), `security`.
 - PostgreSQL 16, schema owned by Flyway (`db/migration`); Hibernate `ddl-auto: validate`.
@@ -31,30 +32,32 @@ Final project, Syntax Institut module "Fullstack, Backend & DevOps". Docs are in
   in `security/SecurityConfig.java`; planners cannot approve/receive purchase requests.
   Public: `/actuator/health`, Swagger UI, `/v3/api-docs`.
 - Keycloak realm `prodflow` imported from `keycloak/prodflow-realm.json`; public client
-  `prodflow-web` (PKCE S256) prepared for a future frontend.
+  `prodflow-web` (PKCE S256) is the client of the Angular frontend.
 - `docker-compose.yml` (local): `db`, `keycloak-db`, `keycloak`, `backend`.
-- Frontend: Angular 21 + PrimeNG 21 in `frontend/` (German UI, Keycloak PKCE, dashboard, inventory + single-level BOM view, orders, purchase requests).
-  Implemented and tested LOCALLY on branch `feature/frontend-foundation` (not pushed, not deployed). The SPA is compiled into the backend image
-  (`backend/Dockerfile`, build context = repository root) and served by Spring Boot; runtime config from `GET /config.json`. See `docs/frontend-architecture.md`,
-  ADR #16–#19, `docs/frontend-rollout.md`.
+- Frontend: Angular 21 + PrimeNG 21 in `frontend/` (German UI, Keycloak PKCE, dashboard, inventory + read-only single-level BOM view, orders, purchase requests).
+  Merged (PR #34) and live in production since 2026-10-20. The SPA is compiled into the backend image (`backend/Dockerfile`, build context = repository root)
+  and served by Spring Boot; runtime config from `GET /config.json`. See `docs/frontend-architecture.md`, ADR #20–#23, `docs/frontend-rollout.md`.
 
-## Proposed AWS deployment architecture (NOT implemented, not final)
-- Single EC2 instance running Docker Compose: PostgreSQL, Keycloak, backend, and
-  Caddy as reverse proxy with automatic HTTPS.
-- RDS and Nginx are mentioned in older docs but are NOT final decisions.
-- Existing `deploy/docker-compose.prod.yml` contains only the backend (port 80) and
-  predates this proposal.
+## AWS production deployment (implemented, ADR #15 → #17; running since 2026-10-18)
+- Single EC2 instance (Ubuntu 24.04, `t3.small`) running Docker Compose (`deploy/docker-compose.prod.yml`): Caddy (automatic HTTPS, two DuckDNS hostnames),
+  backend (serves the Angular SPA), Keycloak, and two PostgreSQL containers. RDS and Nginx are not planned.
+- Public URLs: app `https://prodflow-farhad.duckdns.org`, sign-in `https://prodflow-auth-farhad.duckdns.org`. Only ports 80/443 are public; Keycloak admin only via SSH tunnel.
+- Pull-based CD is operational (ADR #18): CI publishes `sha-<commit>`/`latest`/`prod` to GHCR; a systemd agent on the server (`deploy/agent.sh`, every minute)
+  deploys a new `prod` image with a health + application gate and automatic rollback; pause it with `/var/lib/prodflow/hold`; manual deploys run under the
+  agent lock. Runbooks: `docs/first-deployment-runbook.md`, `docs/frontend-rollout.md`, `docs/agents/PLAN_B_ROLLOUT_RUNBOOK.md`.
+- Last verified 2026-10-20: production at revision `b509944` (backend and frontend), `verify-deployment.sh` 41/41, `smoke-auth.sh` 38/38. Re-verify the live state
+  (read-only) before relying on it. All production changes still need my explicit approval (see Safety rules).
 
 ## Tech stack
 Java 21, Spring Boot 3.4, Spring Security OAuth2 Resource Server, PostgreSQL 16, Flyway,
 JUnit 5 + Testcontainers, springdoc, Docker (multi-stage) + Compose, Keycloak,
-GitHub Actions, GHCR. Frontend: Angular 21, PrimeNG 21 (MIT), ESLint, Playwright. Deployment: AWS EC2, Caddy.
+GitHub Actions, GHCR. Frontend: Angular 21, PrimeNG 21 (MIT), ESLint, Playwright. Deployment: AWS EC2, Caddy, pull-based agent.
 
 ## Local development (run only with approval)
 - Prereq: Docker Desktop; `.env` created from `.env.example`.
 - `docker compose up --build` → backend http://localhost:8080 (`/swagger-ui.html`,
   `/actuator/health`), Keycloak http://localhost:8180. Profile `demo` loads sample data.
-- Protected API calls need a Bearer token from Keycloak (README curl demo lacks auth).
+- Protected API calls need a Bearer token from Keycloak (Swagger UI "Authorize", the app, or `scripts/demo-run.sh`).
 - Tests: `cd backend && mvn verify` (Docker needed for Testcontainers). Key tests:
   `ProductionWorkflowTest`, `ApiSmokeTest`, `security/AuthorizationMatrixTest`,
   `JwtValidationTest`, `KeycloakRoleConverterTest`.
@@ -68,28 +71,34 @@ Implemented:
 - API: items (GET/POST/PUT, POST `/{id}/stock`), BOM (GET/POST/DELETE),
   production orders (GET/POST, check-material, complete), purchase requests
   (GET, approve, receive).
-- CI/CD workflow: test on push/PR; on `main` build + push to GHCR (`sha-<commit>`, `latest`).
-  Verified 2026-10-15: GitHub Actions run 38737122912 (merge of PR #5, `2a15d8d`) green;
-  `sha-2a15d8d` and `latest` published to GHCR (public). No AWS deployment has occurred
-  (the deploy job skipped its EC2 steps). Re-verify before relying on this.
+- CI/CD (`.github/workflows/ci-cd.yml`): jobs `test`, `frontend` (lint, unit tests, build), `ops` (deployment-script and Caddyfile tests) on every push/PR; on `main`
+  `build` (one image with SPA + backend → GHCR `sha-<commit>`, `latest`, `prod`) and `verify` (revision, `scripts/verify-deployment.sh`). Verified 2026-10-20: run 39340016246
+  on merge commit `b509944` green. Re-verify before relying on this.
+- Production on AWS (see section above), Angular frontend (PR #34, Issue #33), Keycloak `prodflow-web` URIs added additively, deployment application gate +
+  `DEPLOY_ROLLBACK_TO_BACKEND_ONLY` rollback switch, Plan B manual rollout S1–S8 completed 2026-10-20 (automatic agent resumed).
+- Tests (2026-10-20): 132 backend, 119 frontend unit, 30 Playwright (disposable stack), plus script tests (`scripts/test-deploy-gate.sh`, `test-deploy-agent.sh`, `test-prod-stack.sh`).
 
 Not done / planned:
-- AWS EC2 deployment: NOT completed (deploy job skips its steps without `EC2_HOST`).
-- Branch protection on `main`: unverified.
-- Production Keycloak/OIDC config, HTTPS (Caddy), Swagger off in production.
-- Frontend rollout to AWS (needs approvals: Keycloak `prodflow-web` URIs via `scripts/provision-web-client.ps1`, push/PR/merge); docs/diagram and demo prep (#12–#13).
+- Branch protection on `main`: NOT enabled (verified 2026-10-20, GitHub Issue #15). No backups (#20), no rebuild rehearsal (#22), no infrastructure as code, no alerting.
+- Swagger UI and `/v3/api-docs` stay public in production (documented demo exception, ADR #16).
+- Presentation on 2026-10-26: slides, fallback clips, rehearsals (Issues #11, #12, #19, #23, #24); documents in `docs/presentation/`. Production demo data is NOT at the
+  demo baseline (reset needs my approval; see `docs/presentation/demo-skript-de.md`). AWS teardown after the presentation (Issue #13).
+- Frontend scope: items/BOM are read-only in the UI (maintenance only via API), no order search or pagination, no stock-adjustment dialog.
 - Stretch: multi-level BOM, make-or-buy, reservations, Excel import.
 
 ## Known limitations
 - No material reservation (completion re-checks stock, so it never goes negative).
 - Single-level BOM; `open-in-view: true` is accepted tech debt.
-- Docs drift: README still lacks auth (curl demo without token), `PUT /api/items/{id}`,
-  and mentions RDS/Nginx; backlog #12 diagram still assumes Nginx → RDS.
+- Demo data and units are English (`pcs`, "Hex screw") in a German UI; the browser shows some API GETs as aborted although the response arrived (Angular fetch backend).
+- Docs: `docs/backlog.md` and `docs/devlog.md` were synchronized on 2026-10-20; the architecture diagram for the slides is still to be drawn (Issue #12).
 
 ## Documentation
-- `README.md` — overview, workflow, API, local start, pipeline, rollback
-- `docs/architecture.md` — ADRs (#1–#15), MVP limits, data model, authorization matrix,
-  local vs. proposed AWS runtime, original EC2 setup (partly superseded by ADR #15)
+- `README.md` — overview, feature scope, workflow, API, local start, pipeline, rollback, known limits
+- `docs/architecture.md` — ADRs (#1–#23), MVP limits, data model, authorization matrix,
+  local and AWS runtime, pipeline; the original EC2 setup section is superseded by ADR #15/#17/#18
+- `docs/frontend-architecture.md`, `docs/frontend-rollout.md` — Angular frontend, rollout and rollback
+- `docs/aws-deployment.md`, `docs/first-deployment-runbook.md`, `docs/agents/PLAN_B_ROLLOUT_RUNBOOK.md` — AWS background and runbooks
+- `docs/presentation/*.md` — demo script, slide outline, debugging case, checklist and rehearsal plan (German)
 - `docs/backlog.md` — issues by sprint with acceptance criteria
 - `docs/devlog.md` — daily dev log
 - `docs/agents/*.md` — agent skills configuration (`issue-tracker.md`, `domain.md`; English)
@@ -118,5 +127,5 @@ GitHub Issues in `sababif-bit/prodflow` via `gh`, written in English; `[Backlog 
 `feature/<GitHub-issue-number>-<name>`, no `ready-for-agent` label without approval. See `docs/agents/issue-tracker.md`.
 
 ### Domain docs
-Single context: ADRs as rows in `docs/architecture.md` (#16 onward, never `docs/adr/`; ADR #15 is a proposal),
+Single context: ADRs as rows in `docs/architecture.md` (next free number: #24; never `docs/adr/`; ADR #15 was implemented as #17; #16–#19 are the Swagger/AWS/pull-CD/secrets decisions of Issue #23, #20–#23 the frontend decisions),
 `GLOSSARY.md` at the root (created only once a term is agreed), project docs in German. See `docs/agents/domain.md`.

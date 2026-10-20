@@ -1,7 +1,7 @@
 # Frontend-Architektur
 
-Stand: 19.10.2026, Branch `feature/frontend-foundation` (lokal committet, nicht gepusht, nicht deployt). Die verbindlichen Entscheidungen stehen als
-ADR #16–#19 in `docs/architecture.md`; dieses Dokument beschreibt Aufbau, Betrieb und Grenzen. Rollout: `docs/frontend-rollout.md`.
+Stand: 20.10.2026. Das Frontend ist seit dem 20.10.2026 in Produktion (PR #34, Revision `b509944`). Die verbindlichen Entscheidungen stehen als
+ADR #20–#23 in `docs/architecture.md`; dieses Dokument beschreibt Aufbau, Betrieb und Grenzen. Rollout: `docs/frontend-rollout.md`.
 
 ## Überblick
 - Angular 21.2 (zoneless, standalone, Signals), PrimeNG 21.1.10 mit eigenem Preset auf Aura, Tailwind CSS 4 (Layout), keycloak-js 26.2.4,
@@ -11,7 +11,7 @@ ADR #16–#19 in `docs/architecture.md`; dieses Dokument beschreibt Aufbau, Betr
 - Routen: `/uebersicht`, `/auftraege`, `/auftraege/:id`, `/bestellanforderungen`, `/bestand`, `/bestand/:id`, `/keine-berechtigung`, sonst 404-Seite.
   Dieselbe Liste kennt das Backend (`de.prodflow.web.FrontendRoutes`) für den SPA-Fallback und den öffentlichen GET-Zugriff.
 
-## Auslieferung (ADR #17)
+## Auslieferung (ADR #21)
 - `backend/Dockerfile` ist mehrstufig: Stufe `frontend` (Node 22, `npm ci`, `ng build`), Stufe `build` (Maven; die SPA wird nach
   `src/main/resources/static` kopiert, der Build bricht ab, wenn `index.html` fehlt oder eine `config.json` mitgeliefert würde), Laufzeitstufe
   (nur JRE + Jar). Der **Build-Kontext ist das Repository-Wurzelverzeichnis** (`docker build -f backend/Dockerfile .`); `.dockerignore` ist eine
@@ -19,10 +19,10 @@ ADR #16–#19 in `docs/architecture.md`; dieses Dokument beschreibt Aufbau, Betr
 - Spring Boot liefert die Dateien same-origin aus. Nur die Routen aus `FrontendRoutes` werden auf `index.html` weitergeleitet; ein unbekannter
   Pfad bleibt 401/403/404. `SecurityConfig` erlaubt öffentlich nur GET/HEAD auf diese Dateien und Routen; alles Übrige bleibt „deny by default“
   (`AuthorizationMatrixTest`, `FrontendServingTest`).
-- Caddy (Produktion) setzt CSP, `Permissions-Policy` und die Cache-Header (ADR #19). Der Angular-Build erzeugt keine Inline-Skripte
+- Caddy (Produktion) setzt CSP, `Permissions-Policy` und die Cache-Header (ADR #23). Der Angular-Build erzeugt keine Inline-Skripte
   (`optimization.styles.inlineCritical: false`), damit `script-src 'self'` gilt.
 
-## Laufzeitkonfiguration und Anmeldung (ADR #18)
+## Laufzeitkonfiguration und Anmeldung (ADR #22)
 - `GET /config.json` beantwortet das Backend aus `OIDC_ISSUER_URI` (`https://<auth>/realms/<realm>` → `{keycloak:{url,realm,clientId}}`, nie gecacht,
   Start schlägt fehl bei unpassendem Issuer). Die kompilierten Dateien enthalten keinen umgebungsspezifischen Wert. Entwicklung: der Dev-Proxy
   leitet `/config.json` an das Backend weiter (Standard `http://localhost:8080` → `http://localhost:8180`).

@@ -26,6 +26,22 @@ Fertigungsauftrag anlegen ──► Materialprüfung (Stückliste × Menge vs. B
      Auftrag abschließen (Material wird verbraucht, Fertigprodukt eingelagert)
 ```
 
+## Funktionsumfang (Stand 20.10.2026)
+
+| Bereich | Umgesetzt und geprüft |
+|---|---|
+| Backend | Artikel (Material/Produkt, Bestand), **einstufige** Stückliste, Fertigungsaufträge mit Materialprüfung (idempotent, keine doppelten Bestellanforderungen), Bestellanforderungen (genehmigen, Wareneingang), automatische Freigabe wartender Aufträge, Auftragsabschluss; Fehler als RFC 7807 |
+| Oberfläche (Angular) | Deutsch; Übersicht, Bestand mit Suche/Filter und Artikeldetail mit Stückliste (nur lesend), Fertigungsaufträge (anlegen, Materialprüfung anzeigen, erneut prüfen, abschließen), Bestellanforderungen (genehmigen, Wareneingang buchen); rollenabhängige Navigation und Aktionen; Lade-, Leer- und Fehlerzustände |
+| Anmeldung | Keycloak, Authorization Code + PKCE; Rollen **ADMIN**, **PLANNER** (Planer), **PURCHASER** (Einkäufer). Funktionstrennung: Der Planer legt Aufträge an und schließt sie ab, darf Bestellanforderungen aber **nicht** genehmigen oder buchen; der Einkäufer umgekehrt. Alles, was nicht ausdrücklich erlaubt ist, wird abgelehnt (401/403) |
+| Infrastruktur | Eine AWS-EC2-Instanz, Docker Compose: Caddy (HTTPS mit Let's Encrypt), Backend mit Oberfläche, Keycloak, zwei PostgreSQL-Container |
+| CI/CD | GitHub Actions (Test, Frontend, Betrieb, Build, Verify), Image in GHCR mit `sha-<commit>`; pull-basierter Agent auf dem Server mit Gesundheits- und Anwendungs-Gate, automatischem Rollback und Prüfung von außen |
+
+Schwerpunkt der Prüfungen: 132 Backend-Tests, 119 Frontend-Unit-Tests, 30 Browser-Tests, Tests der Deployment-Skripte gegen echte Container sowie eine Verifikation der Produktion (`scripts/verify-deployment.sh`, `scripts/smoke-auth.sh`).
+
+**Dokumentation:** [Architektur und Entscheidungen (ADR)](docs/architecture.md) · [Frontend](docs/frontend-architecture.md) · [Rollout](docs/frontend-rollout.md) · [AWS-Hintergrund](docs/aws-deployment.md) ·
+[Erste Inbetriebnahme](docs/first-deployment-runbook.md) · [Backlog](docs/backlog.md) · [Entwicklungstagebuch](docs/devlog.md) · Präsentation: [Demo-Skript](docs/presentation/demo-skript-de.md),
+[Folien](docs/presentation/folien-gliederung-de.md), [Debugging-Fall](docs/presentation/debugging-fall-csp-de.md), [Checkliste und Proben](docs/presentation/checkliste-und-probenplan-de.md)
+
 ## Tech-Stack
 
 | Bereich | Technologie | Warum |
@@ -36,8 +52,8 @@ Fertigungsauftrag anlegen ──► Materialprüfung (Stückliste × Menge vs. B
 | API-Doku | springdoc / Swagger UI | API im Browser testbar, auch in der Live-Demo |
 | Container | Docker (multi-stage), Docker Compose | Gleiches Image lokal, in CI und in der Cloud |
 | CI/CD | GitHub Actions, GHCR | Test (Backend, Frontend, Betriebsskripte) → Build → Auslieferung per Pull-Agent → Verify |
-| Cloud | AWS EC2, Docker Compose, Caddy (HTTPS) | Einfach, nachvollziehbar, im Kurs gelernt (ADR #15; RDS ist nicht vorgesehen) |
-| Frontend | Angular 21 + PrimeNG 21 (`frontend/`) | Tabellen und Formulare für Planung und Einkauf; liegt im Backend-Image (ADR #16–#19) |
+| Cloud | AWS EC2, Docker Compose, Caddy (HTTPS) | Einfach, nachvollziehbar, im Kurs gelernt (ADR #15/#17; RDS ist nicht vorgesehen) |
+| Frontend | Angular 21 + PrimeNG 21 (`frontend/`) | Tabellen und Formulare für Planung und Einkauf; liegt im Backend-Image (ADR #20–#23) |
 | Anmeldung | Keycloak (OAuth2/OIDC, PKCE) | Rollen ADMIN, PLANNER, PURCHASER; das Backend prüft nur Tokens (ADR #14) |
 
 Architekturentscheidungen: [`docs/architecture.md`](docs/architecture.md) ·
@@ -99,7 +115,16 @@ Jeder Push auf `main` läuft durch `.github/workflows/ci-cd.yml` (Details: [`doc
 **Rollback von Hand:** Agent pausieren (`touch /var/lib/prodflow/hold`), dann `deploy/deploy.sh sha-<früherer Commit>`. Einrichtung und Frontend-Rollout:
 [`docs/first-deployment-runbook.md`](docs/first-deployment-runbook.md), [`docs/frontend-rollout.md`](docs/frontend-rollout.md).
 
-## Roadmap (Stretch Goals)
+## Bekannte Grenzen
+
+- **Einstufige Stückliste:** Der Code löst genau eine Ebene auf. Das Datenmodell (`bom_line` verweist auf `item`) ist für mehrere Ebenen vorbereitet, die Auflösung, die Zyklenprüfung und die Bestandsberechnung je Ebene fehlen. Die Oberfläche beschriftet die Stückliste deshalb ausdrücklich als einstufig.
+- **Keine Materialreservierung:** Zwei freigegebene Aufträge können denselben Bestand „sehen“; beim Abschließen wird der Bestand erneut geprüft, er wird nie negativ.
+- **Oberfläche ist überwiegend lesend:** Artikel und Stücklistenpositionen lassen sich nur über die API pflegen (Swagger UI), nicht in der Oberfläche; keine Suche nach Auftragsnummer, keine Seitenaufteilung, kein Dialog für Bestandskorrekturen.
+- **Demo-Daten und Einheiten sind englisch** (z. B. „Hex screw“, „pcs“); die Oberfläche ist deutsch.
+- **Betrieb:** eine Instanz ohne Hochverfügbarkeit (die Auslieferung unterbricht den Dienst etwa 30 Sekunden), keine Backups, kein Infrastruktur-Code, keine Alarmierung, kein Branch-Schutz für `main`; Swagger UI ist als Demo-Ausnahme öffentlich.
+- Weitere technische Schulden: `open-in-view` ist aktiv; DevTools zeigen für API-Aufrufe teilweise „abgebrochen“ (die Antwort ist angekommen, der Aufruf wird danach beendet).
+
+## Roadmap und Ausblick
 
 1. Mehrstufige Stücklisten (Baugruppen mit Unterbaugruppen) – Datenmodell ist bereits vorbereitet
 2. Eigenfertigung vs. Fremdbezug (Make-or-Buy) mit Unteraufträgen
